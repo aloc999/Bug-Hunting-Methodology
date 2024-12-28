@@ -1,4 +1,4 @@
-# Bug Bounty Methodology 2025 Edition
+<h1 align="center">Bug Bounty Methodology 2025 Edition</h1>
 
 <div align="center">
    
