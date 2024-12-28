@@ -1,17 +1,29 @@
 # Bug Bounty Methodology 2025 Edition
 
+<div align="center">
+   
 ![Edition](https://img.shields.io/badge/Edition-2025-blue)
 ![License](https://img.shields.io/badge/License-All%20Rights%20Reserved-red)
-![Author](https://img.shields.io/badge/Author-Amr%20Elsagaei-green)
-
-Welcome to the **Bug Bounty Methodology 2025 Edition**! This guide is designed to help modern bug bounty hunters uncover high-impact vulnerabilities with precision and efficiency. Whether you're an experienced hunter or just starting, you'll find actionable steps, tools, and techniques to master the art of ethical hacking.
-[![Bug Bounty Methodology 2025 Edition](https://i.ytimg.com/vi/x6ZN02G3CeE/hqdefault.jpg?sqp=-oaymwEnCNACELwBSFryq4qpAxkIARUAAIhCGAHYAQHiAQoIGBACGAY4AUAB&rs=AOn4CLBPOesofNcGgyqNB70zz7wjqE7oHA)](https://www.youtube.com/watch?v=x6ZN02G3CeE)
-
+![Author](https://img.shields.io/badge/Author-Amr%20Elsagaei-green) __
 [![YouTube](https://img.shields.io/badge/YouTube-@AmrSecOfficial-red)](https://www.youtube.com/@AmrSecOfficial)
 [![Twitter](https://img.shields.io/badge/Twitter-@amrelsagaei-1DA1F2)](https://twitter.com/amrelsagaei)
 [![LinkedIn](https://img.shields.io/badge/LinkedIn-amrelsagaei-0077B5)](https://www.linkedin.com/in/amrelsagaei)
 [![Telegram](https://img.shields.io/badge/Telegram-AmrSecOfficial-2CA5E0)](https://t.me/AmrSecOfficial)
----
+
+</div>
+
+<br>
+<div style="text-align: center;">
+    <a href="https://www.youtube.com/watch?v=x6ZN02G3CeE" target="_blank">
+        <img src="https://blog.amrelsagaei.com/storage/posts/webp/api-penetration-testing-pt2.webp" alt="Bug Bounty Methodology 2025 Edition" style="width: 100%;">
+    </a>
+</div>
+<div align="left">
+Welcome to the <strong>Bug Bounty Methodology 2025 Edition</strong>! This guide is designed to help modern bug bounty hunters uncover high-impact vulnerabilities with precision and efficiency. Whether you're an experienced hunter or just starting, you'll find actionable steps, tools, and techniques to master the art of ethical hacking.
+</div>
+
+
+<br>
 
 ## 📜 Table of Contents
 
@@ -24,6 +36,11 @@ Welcome to the **Bug Bounty Methodology 2025 Edition**! This guide is designed t
 | 5. [Two-Eye Approach](#5-the-two-eye-approach) | What is that? |
 | 6. [POC Creation](#6-proof-of-concept-poc-creation) | Documentation & Evidence |
 | 7. [Reporting](#7-reporting) | Final Documentation |
+
+---
+
+<br>
+
 
 ## **1. Reconnaissance and Subdomain Enumeration**
 
@@ -138,6 +155,11 @@ cloud_enum -k target.com
 cat all_subs.txt | httpx -silent -title -o live_subdomains.txt
 ```
 
+---
+
+<br>
+
+
 ## **2. Discovery and Probing**
 
 ### **2.1 HTTP Probing**
@@ -237,6 +259,11 @@ waybackurls target.com | anew wayback_urls.txt
 cat archived_urls.txt | grep "=" | anew parameters.txt
 ```
 
+---
+
+<br>
+
+
 ## **3. Advanced Enumeration Techniques**
 
 ### **3.1 Parameter Discovery**
@@ -324,6 +351,11 @@ shodan search "net:<ip_range>" --fields ip_str,port --limit 100
 censys search "autonomous_system.asn:<ASN_Number>" -o censys_assets.txt
 ```
 
+---
+
+<br>
+
+
 ## **4. Vulnerability Testing**
 
 ### **4.1 High-Priority Vulnerabilities**
@@ -358,6 +390,11 @@ cat js_files.txt | grep -Ei "key|token|auth|password" > sensitive_data.txt
 cat urls.txt | grep "=http" | qsreplace "https://evil.com" | xargs -I@ curl -I -s @ | grep "evil.com"
 ```
 
+---
+
+<br>
+
+
 ## **5. The "Two-Eye" Approach**
 1. **First Eye:** Focus on testing every gathered subdomain, endpoint, or parameter for common vulnerabilities.
 2. **Second Eye:** Identify “interesting” findings like exposed credentials, forgotten subdomains, or admin panels.
@@ -378,6 +415,10 @@ Capture clear screenshots with annotations to explain each step.
 
 - **Tool:** Greenshot.
 
+
+---
+
+<br>
 
 
 ## **7. Reporting**
@@ -453,7 +494,10 @@ Capture clear screenshots with annotations to explain each step.
 [CVE, CWE, related resources]
 ```
 
-## 📄 License
-#### © Copyright
+---
 
+<br>
+
+
+## 📄 License
 All Rights Reserved © 2025 **Amr Elsagaei (AmrSec)**.
