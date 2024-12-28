@@ -396,6 +396,13 @@ cat urls.txt | grep "=http" | qsreplace "https://evil.com" | xargs -I@ curl -I -
 - If a vulnerability is identified, create a proof of concept (POC) and test its impact.
 - If no vulnerabilities are found, pivot to deeper testing on unique subdomains or endpoints.
 
+
+
+---
+
+<br>
+
+
 ## **6. Proof of Concept (POC) Creation**
 
 ### **Video POC**
