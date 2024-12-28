@@ -5,6 +5,7 @@
 ![Author](https://img.shields.io/badge/Author-Amr%20Elsagaei-green)
 
 Welcome to the **Bug Bounty Methodology 2025 Edition**! This guide is designed to help modern bug bounty hunters uncover high-impact vulnerabilities with precision and efficiency. Whether you're an experienced hunter or just starting, you'll find actionable steps, tools, and techniques to master the art of ethical hacking.
+[![Bug Bounty Methodology 2025 Edition](https://i.ytimg.com/vi/x6ZN02G3CeE/hqdefault.jpg?sqp=-oaymwEnCNACELwBSFryq4qpAxkIARUAAIhCGAHYAQHiAQoIGBACGAY4AUAB&rs=AOn4CLBPOesofNcGgyqNB70zz7wjqE7oHA)](https://www.youtube.com/watch?v=x6ZN02G3CeE)
 
 [![YouTube](https://img.shields.io/badge/YouTube-@AmrSecOfficial-red)](https://www.youtube.com/@AmrSecOfficial)
 [![Twitter](https://img.shields.io/badge/Twitter-@amrelsagaei-1DA1F2)](https://twitter.com/amrelsagaei)
@@ -20,7 +21,7 @@ Welcome to the **Bug Bounty Methodology 2025 Edition**! This guide is designed t
 | 2. [Discovery](#2-discovery-and-probing) | HTTP Probing & Asset Discovery |
 | 3. [Enumeration](#3-advanced-enumeration-techniques) | Advanced Techniques & Parameter Discovery |
 | 4. [Testing](#4-vulnerability-testing) | Vulnerability Assessment |
-| 5. [Two-Eye Approach](#5-the-two-eye-approach) | Methodology Framework |
+| 5. [Two-Eye Approach](#5-the-two-eye-approach) | What is that? |
 | 6. [POC Creation](#6-proof-of-concept-poc-creation) | Documentation & Evidence |
 | 7. [Reporting](#7-reporting) | Final Documentation |
 
@@ -453,6 +454,6 @@ Capture clear screenshots with annotations to explain each step.
 ```
 
 ## 📄 License
-### © Copyright
+#### © Copyright
 
 All Rights Reserved © 2025 **Amr Elsagaei (AmrSec)**.
