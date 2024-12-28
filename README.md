@@ -44,8 +44,7 @@ Welcome to the <strong>Bug Bounty Methodology 2025 Edition</strong>! This guide 
 ## **1. Reconnaissance and Subdomain Enumeration**
 
 ### **1.1 Passive Subdomain Enumeration**
-
-**Tools:** [Subfinder](https://github.com/projectdiscovery/subfinder), [Amass](https://github.com/OWASP/Amass), [CRTSH](https://github.com/UnaPibaGeek/crtsh), [Github-Search](https://github.com/gwen001/github-search)
+**Tools:** [Subfinder](https://github.com/projectdiscovery/subfinder), [Amass](https://github.com/OWASP/Amass), [CRTSH](https://crt.sh/), [Github-Search](https://github.com/gwen001/github-search)
 
 **Subfinder**
 ```bash
@@ -103,7 +102,7 @@ ffuf -u https://FUZZ.target.com -w wordlist.txt -t 50 -mc 200,403 -o ffuf_subs.t
 
 ### **1.3 Handling Specific (Non-Wildcard) Targets**
 
-**Tools:** [GAU](https://github.com/lc/gau), [Waybackurls](https://github.com/tomnomnom/waybackurls), [Katana](https://github.com/projectdiscovery/katana), [Hakrawler](https://github.com/hakluke/hakrawler), [Paramspider](https://github.com/devanshbatham/ParamSpider)
+**Tools:** [GAU](https://github.com/lc/gau), [Waybackurls](https://github.com/tomnomnom/waybackurls), [Katana](https://github.com/projectdiscovery/katana), [Hakrawler](https://github.com/hakluke/hakrawler)
 
 **GAU**
 ```bash
@@ -123,11 +122,6 @@ katana -u target.example.com -silent -jc -o katana_results.txt
 **Hakrawler**
 ```bash
 echo "https://target.example.com" | hakrawler -depth 2 -plain -js -out hakrawler_results.txt
-```
-
-**Paramspider**
-```bash
-python3 paramspider.py -d target.example.com -o paramspider_results.txt
 ```
 
 ### **Additional Advanced Techniques**
