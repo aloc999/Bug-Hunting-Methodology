@@ -453,11 +453,6 @@ Capture clear screenshots with annotations to explain each step.
 ```
 
 ## 📄 License
-
-**All Rights Reserved**
-
-Unauthorized use, reproduction, or distribution is prohibited without explicit permission from the owner.
-
-## © Copyright
+### © Copyright
 
 All Rights Reserved © 2025 **Amr Elsagaei (AmrSec)**.
