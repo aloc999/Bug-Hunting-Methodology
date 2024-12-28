@@ -4,7 +4,10 @@
    
 ![Edition](https://img.shields.io/badge/Edition-2025-blue)
 ![License](https://img.shields.io/badge/License-All%20Rights%20Reserved-red)
-![Author](https://img.shields.io/badge/Author-Amr%20Elsagaei-green) __
+![Author](https://img.shields.io/badge/Author-Amr%20Elsagaei-green) 
+
+
+
 [![YouTube](https://img.shields.io/badge/YouTube-@AmrSecOfficial-red)](https://www.youtube.com/@AmrSecOfficial)
 [![Twitter](https://img.shields.io/badge/Twitter-@amrelsagaei-1DA1F2)](https://twitter.com/amrelsagaei)
 [![LinkedIn](https://img.shields.io/badge/LinkedIn-amrelsagaei-0077B5)](https://www.linkedin.com/in/amrelsagaei)
