@@ -2,12 +2,12 @@
 
 <div align="center">
    
-![Edition](https://img.shields.io/badge/Edition-2025-blue)
-![Author](https://img.shields.io/badge/Author-Amr%20Elsagaei-green) 
-[![YouTube](https://img.shields.io/badge/YouTube-@AmrSecOfficial-red)](https://www.youtube.com/@AmrSecOfficial)
-[![Twitter](https://img.shields.io/badge/Twitter-@amrelsagaei-1DA1F2)](https://twitter.com/amrelsagaei)
-[![LinkedIn](https://img.shields.io/badge/LinkedIn-amrelsagaei-0077B5)](https://www.linkedin.com/in/amrelsagaei)
-[![Telegram](https://img.shields.io/badge/Telegram-AmrSecOfficial-2CA5E0)](https://t.me/AmrSecOfficial)
+[![Edition](https://img.shields.io/badge/Edition-2025-blue)](#)
+[![Author](https://img.shields.io/badge/Author-Amr%20Elsagaei-green)](#)
+[![YouTube](https://img.shields.io/badge/YouTube-@AmrSecOfficial-c00)](https://www.youtube.com/@AmrSecOfficial)
+[![LinkedIn](https://img.shields.io/badge/LinkedIn-amrelsagaei-0073e3)](https://www.linkedin.com/in/amrelsagaei)
+[![Twitter](https://img.shields.io/badge/X-@amrelsagaei-black)](https://twitter.com/amrelsagaei)
+[![Telegram](https://img.shields.io/badge/Telegram-AmrSecOfficial-0088CC)](https://t.me/AmrSecOfficial)
 
 </div>
 
