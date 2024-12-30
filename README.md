@@ -44,7 +44,7 @@ Welcome to the <strong>Bug Bounty Methodology 2025 Edition</strong>! This method
 ## **1. Reconnaissance and Subdomain Enumeration**
 
 ### **1.1 Passive Subdomain Enumeration**
-**Tools:** [Subfinder](https://github.com/projectdiscovery/subfinder), [Amass](https://github.com/OWASP/Amass), [CRTSH](https://crt.sh/), [Github-Search](https://github.com/gwen001/github-search)
+**🛠️Tools:** [Subfinder](https://github.com/projectdiscovery/subfinder), [Amass](https://github.com/OWASP/Amass), [CRTSH](https://crt.sh/), [Github-Search](https://github.com/gwen001/github-search)
 
 **Subfinder**
 ```bash
@@ -73,7 +73,7 @@ cat *_subs.txt | sort -u | anew all_subs.txt
 
 ### **1.2 Active Subdomain Enumeration**
 
-**Tools:** [MassDNS](https://github.com/blechschmidt/massdns), [Shuffledns](https://github.com/projectdiscovery/shuffledns), [DNSX](https://github.com/projectdiscovery/dnsx), [SubBrute](https://github.com/TheRook/subbrute), [FFuF](https://github.com/ffuf/ffuf)
+**🛠️Tools:** [MassDNS](https://github.com/blechschmidt/massdns), [Shuffledns](https://github.com/projectdiscovery/shuffledns), [DNSX](https://github.com/projectdiscovery/dnsx), [SubBrute](https://github.com/TheRook/subbrute), [FFuF](https://github.com/ffuf/ffuf)
 
 **MassDNS**
 ```bash
@@ -102,7 +102,7 @@ ffuf -u https://FUZZ.target.com -w wordlist.txt -t 50 -mc 200,403 -o ffuf_subs.t
 
 ### **1.3 Handling Specific (Non-Wildcard) Targets**
 
-**Tools:** [GAU](https://github.com/lc/gau), [Waybackurls](https://github.com/tomnomnom/waybackurls), [Katana](https://github.com/projectdiscovery/katana), [Hakrawler](https://github.com/hakluke/hakrawler)
+**🛠️Tools:** [GAU](https://github.com/lc/gau), [Waybackurls](https://github.com/tomnomnom/waybackurls), [Katana](https://github.com/projectdiscovery/katana), [Hakrawler](https://github.com/hakluke/hakrawler)
 
 **GAU**
 ```bash
@@ -126,7 +126,7 @@ echo "https://target.example.com" | hakrawler -depth 2 -plain -js -out hakrawler
 
 ### **Additional Advanced Techniques**
 
-**Tools:** [CloudEnum](https://github.com/initstring/cloud_enum), [AWSBucketDump](https://github.com/jordanpotti/AWSBucketDump), [S3Scanner](https://github.com/sa7mon/S3Scanner)
+**🛠️Tools:** [CloudEnum](https://github.com/initstring/cloud_enum), [AWSBucketDump](https://github.com/jordanpotti/AWSBucketDump), [S3Scanner](https://github.com/sa7mon/S3Scanner)
 
 **Reverse DNS**
 ```bash
@@ -157,7 +157,7 @@ cat all_subs.txt | httpx -silent -title -o live_subdomains.txt
 
 ### **2.1 HTTP Probing**
 
-**Tools:** [httpx](https://github.com/projectdiscovery/httpx), [httprobe](https://github.com/tomnomnom/httprobe)
+**🛠️Tools:** [httpx](https://github.com/projectdiscovery/httpx), [httprobe](https://github.com/tomnomnom/httprobe)
 
 **HTTPX Probing**
 ```bash
@@ -171,7 +171,7 @@ cat live_websites.txt | grep -i "login\|admin" | tee login_endpoints.txt
 
 ### **2.2 JavaScript Analysis**
 
-**Tools:** [LinkFinder](https://github.com/GerbenJavado/LinkFinder), [subjs](https://github.com/lc/subjs), [JSFinder](https://github.com/Threezh1/JSFinder), [GF](https://github.com/tomnomnom/gf)
+**🛠️Tools:** [LinkFinder](https://github.com/GerbenJavado/LinkFinder), [subjs](https://github.com/lc/subjs), [JSFinder](https://github.com/Threezh1/JSFinder), [GF](https://github.com/tomnomnom/gf)
 
 **JS Extraction**
 ```bash
@@ -196,7 +196,7 @@ curl -X GET "https://api.example.com/resource" -H "Authorization: Bearer <extrac
 
 ### **2.3 Advanced Google Dorking**
 
-**Tools:** [GitDorker](https://github.com/obheda12/GitDorker)
+**🛠️Tools:** [GitDorker](https://github.com/obheda12/GitDorker)
 
 **Automated Dorking**
 ```bash
@@ -220,7 +220,7 @@ site:*.example.com inurl:"id_rsa.pub" | inurl:".pem"
 
 ### **2.4 URL Discovery**
 
-**Tools:** [Katana](https://github.com/projectdiscovery/katana), [Gospider](https://github.com/jaeles-project/gospider), [Hakrawler](https://github.com/hakluke/hakrawler)
+**🛠️Tools:** [Katana](https://github.com/projectdiscovery/katana), [Gospider](https://github.com/jaeles-project/gospider), [Hakrawler](https://github.com/hakluke/hakrawler)
 
 **Katana Crawling**
 ```bash
@@ -239,7 +239,7 @@ echo "https://target.com" | hakrawler -depth 3 -plain -out hakrawler_results.txt
 
 ### **2.5 Archive Enumeration**
 
-**Tools:** [GAU](https://github.com/lc/gau), [Waybackurls](https://github.com/tomnomnom/waybackurls), [ParamSpider](https://github.com/devanshbatham/ParamSpider)
+**🛠️Tools:** [GAU](https://github.com/lc/gau), [Waybackurls](https://github.com/tomnomnom/waybackurls), [ParamSpider](https://github.com/devanshbatham/ParamSpider)
 
 **Archive URL Collection**
 ```bash
@@ -261,7 +261,7 @@ cat archived_urls.txt | grep "=" | anew parameters.txt
 
 ### **3.1 Parameter Discovery**
 
-**Tools:** [Arjun](https://github.com/s0md3v/Arjun), [ParamSpider](https://github.com/devanshbatham/ParamSpider), [FFuF](https://github.com/ffuf/ffuf)
+**🛠️Tools:** [Arjun](https://github.com/s0md3v/Arjun), [ParamSpider](https://github.com/devanshbatham/ParamSpider), [FFuF](https://github.com/ffuf/ffuf)
 
 **Arjun Parameter Discovery**
 ```bash
@@ -280,7 +280,7 @@ ffuf -u https://target.com/page.php?FUZZ=test -w /usr/share/wordlists/params.txt
 
 ### **3.2 Cloud Asset Enumeration**
 
-**Tools:** [CloudEnum](https://github.com/initstring/cloud_enum), [AWSBucketDump](https://github.com/jordanpotti/AWSBucketDump), [S3Scanner](https://github.com/sa7mon/S3Scanner)
+**🛠️Tools:** [CloudEnum](https://github.com/initstring/cloud_enum), [AWSBucketDump](https://github.com/jordanpotti/AWSBucketDump), [S3Scanner](https://github.com/sa7mon/S3Scanner)
 
 **Cloud Bucket Enumeration**
 ```bash
@@ -299,7 +299,7 @@ python3 AWSBucketDump.py -b target-bucket -o dumped_data/
 
 ### **3.3 Content Discovery**
 
-**Tools:** [Feroxbuster](https://github.com/epi052/feroxbuster), [FFuF](https://github.com/ffuf/ffuf), [Dirsearch](https://github.com/maurosoria/dirsearch)
+**🛠️Tools:** [Feroxbuster](https://github.com/epi052/feroxbuster), [FFuF](https://github.com/ffuf/ffuf), [Dirsearch](https://github.com/maurosoria/dirsearch)
 
 **Feroxbuster**
 ```bash
@@ -318,7 +318,7 @@ ffuf -u https://target.com/FUZZ -w /usr/share/wordlists/content_discovery.txt -m
 
 ### **3.4 API Enumeration**
 
-**Tools:** [Kiterunner](https://github.com/assetnote/kiterunner), [Postman](https://www.postman.com/), [Burp Suite](https://portswigger.net/burp)
+**🛠️Tools:** [Kiterunner](https://github.com/assetnote/kiterunner), [Postman](https://www.postman.com/), [Burp Suite](https://portswigger.net/burp)
 
 **Kiterunner**
 ```bash
@@ -327,7 +327,7 @@ kr scan https://api.target.com -w /usr/share/kiterunner/routes-large.kite -o api
 
 ### **3.5 ASN Mapping**
 
-**Tools:** [Amass](https://github.com/OWASP/Amass), [Shodan](https://www.shodan.io/), [Censys](https://censys.io/)
+**🛠️Tools:** [Amass](https://github.com/OWASP/Amass), [Shodan](https://www.shodan.io/), [Censys](https://censys.io/)
 
 **ASN Lookup**
 ```bash
@@ -353,32 +353,32 @@ censys search "autonomous_system.asn:<ASN_Number>" -o censys_assets.txt
 
 ### **4.1 High-Priority Vulnerabilities**
 
-**CSRF Testing**
+**🐞CSRF Testing**
 ```bash
 cat live_websites.txt | gf csrf | tee csrf_endpoints.txt
 ```
 
-**LFI Testing**
+**🐞LFI Testing**
 ```bash
 cat live_websites.txt | gf lfi | qsreplace "/etc/passwd" | xargs -I@ curl -s @ | grep "root:x:" > lfi_results.txt
 ```
 
-**RCE Testing**
+**🐞RCE Testing**
 ```bash
 curl -X POST -F "file=@exploit.php" https://target.com/upload
 ```
 
-**SQLi Testing**
+**🐞SQLi Testing**
 ```bash
 ghauri -u "https://target.com?id=1" --dbs --batch
 ```
 
-**Sensitive Data Search**
+**🐞Sensitive Data Search**
 ```bash
 cat js_files.txt | grep -Ei "key|token|auth|password" > sensitive_data.txt
 ```
 
-**Open Redirect Test**
+**🐞Open Redirect Test**
 ```bash
 cat urls.txt | grep "=http" | qsreplace "https://evil.com" | xargs -I@ curl -I -s @ | grep "evil.com"
 ```
@@ -388,7 +388,7 @@ cat urls.txt | grep "=http" | qsreplace "https://evil.com" | xargs -I@ curl -I -
 <br>
 
 
-## **5. The "Two-Eye" Approach**
+## **5. The "Two-Eye" Approach 👀**
 1. **First Eye:** Focus on testing every gathered subdomain, endpoint, or parameter for common vulnerabilities.
 2. **Second Eye:** Identify “interesting” findings like exposed credentials, forgotten subdomains, or admin panels.
 
@@ -405,15 +405,15 @@ cat urls.txt | grep "=http" | qsreplace "https://evil.com" | xargs -I@ curl -I -
 
 ## **6. Proof of Concept (POC) Creation**
 
-### **Video POC**
+### **🎥Video POC**
 
 Demonstrate vulnerabilities in action using screen recording tools like Greenshot or OBS Studio.
 
-### **Screenshot POC**
+### **📸Screenshot POC**
 
 Capture clear screenshots with annotations to explain each step.
 
-- **Tool:** Greenshot.
+- **🛠️Tool:** Greenshot.
 
 
 ---
@@ -423,7 +423,7 @@ Capture clear screenshots with annotations to explain each step.
 
 ## **7. Reporting**
 
-### **Report Structure**
+### **📝Report Structure**
 
 1. **Executive Summary**
    - Target Scope
