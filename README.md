@@ -18,7 +18,7 @@
     </a>
 </div>
 <div align="left">
-Welcome to the <strong>Bug Bounty Methodology 2025 Edition</strong>! This guide is designed to help modern bug bounty hunters uncover high-impact vulnerabilities with precision and efficiency. Whether you're an experienced hunter or just starting, you'll find actionable steps, tools, and techniques to master the art of ethical hacking.
+Welcome to the <strong>Bug Bounty Methodology 2025 Edition</strong>! This methodology is a basic guide to help you kickstart your bug bounty journey. It outlines the essential steps to navigate your target effectively, but the real challenge lies in identifying high-impact vulnerabilities through your own skills and creativity. This methodology will be updated regularly as new and interesting techniques emerge to enhance your testing process.
 </div>
 
 
