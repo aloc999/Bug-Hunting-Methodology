@@ -13,7 +13,7 @@
 
 <br>
 <div style="text-align: center;">
-    <a href="https://www.youtube.com/watch?v=x6ZN02G3CeE" target="_blank">
+    <a href="https://youtu.be/bAHNM8IInwE" target="_blank">
         <img src="https://blog.amrelsagaei.com/storage/posts/webp/bug-bounty-metho-2025.webp" alt="Bug Bounty Methodology 2025 Edition" style="width: 100%;">
     </a>
 </div>
