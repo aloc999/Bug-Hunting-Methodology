@@ -23,6 +23,7 @@ Welcome to the <strong>Bug Bounty Methodology 2025 Edition</strong>! This method
 
 
 <br>
+
 ## 📜 Table of Contents
 
 | Section | Description |
