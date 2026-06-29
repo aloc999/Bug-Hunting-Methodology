@@ -1,24 +1,23 @@
-<h1 align="center">Bug Bounty Hunting Methodology 2025</h1>
+<h1 align="center">&#x1F4A5; Bug Bounty Methodology &#x1F4A5;</h1>
 
 <div align="center">
    
 [![Edition](https://img.shields.io/badge/Edition-2025-blue)](#)
-[![Author](https://img.shields.io/badge/Author-Amr%20Elsagaei-green)](#)
-[![YouTube](https://img.shields.io/badge/AmrSecOfficial-c00?logo=youtube&logoColor=white)](https://www.youtube.com/@AmrSecOfficial)
-[![Twitter](https://img.shields.io/badge/amrelsagaei-black?logo=X)](https://twitter.com/amrelsagaei)
-[![Telegram](https://img.shields.io/badge/AmrSecOfficial-0088CC?logo=telegram&logoColor=white)](https://t.me/AmrSecOfficial)
-[![LinkedIn](https://img.shields.io/badge/LinkedIn-amrelsagaei-0073e3?logo=linkedin&labelColor=white)](https://www.linkedin.com/in/amrelsagaei)
+[![Status](https://img.shields.io/badge/Status-Live-brightgreen)](#)
+[![Focus](https://img.shields.io/badge/Focus-Web%20%7C%20API%20%7C%20Cloud-red)](#)
 
 </div>
 
 <br>
-<div style="text-align: center;">
-    <a href="https://youtu.be/bAHNM8IInwE" target="_blank">
-        <img src="https://amrelsagaei.com/storage/code/posts/bug-bounty-metho-2025.webp" alt="Bug Bounty Methodology 2025 Edition" style="width: 100%;">
-    </a>
-</div>
+
 <div align="left">
-Welcome to the <strong>Bug Bounty Methodology 2025 Edition</strong>! This methodology is a basic guide to help you kickstart your bug bounty journey. It outlines the essential steps to navigate your target effectively, but the real challenge lies in identifying high-impact vulnerabilities through your own skills and creativity. This methodology will be updated regularly as new and interesting techniques emerge to enhance your testing process.
+
+> *"The hunter who maps the terrain before the hunt never returns empty-handed."*
+
+Bug bounty hunting isn't about running tools — it's about **understanding attack surfaces** and **thinking like an adversary**. This methodology gives you the reconnaissance backbone, the enumeration muscle, and the exploitation instinct to turn surface-level scanning into deep, impactful discoveries. The tools are just the brush. Your mind is the canvas.
+
+No fluff. No filler. Just the workflow that finds bugs.
+
 </div>
 
 
@@ -500,4 +499,4 @@ Capture clear screenshots with annotations to explain each step.
 
 
 ## 📄 License
-All Rights Reserved © 2025 **Amr Elsagaei (AmrSec)**.
+MIT License — Hack responsibly. Share knowledge. Build the community.
