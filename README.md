@@ -1,7 +1,22 @@
-<h1 align="center">&#x1F4A5; Bug Bounty Methodology &#x1F4A5;</h1>
-
 <div align="center">
-   
+
+```
+╔══════════════════════════════════════════╗
+║                                          ║
+║         ░▒▓█  BUG HUNTING  █▓▒░         ║
+║                                          ║
+║     the complete hunter's methodology    ║
+║                                          ║
+║  ────────────────────────────────────    ║
+║  PLAYER 1     :  READY                  ║
+║  DIFFICULTY   :  EXPERT                 ║
+║  VULN CLASSES :  42                     ║
+║  TOOLS        :  30+                    ║
+║  ────────────────────────────────────    ║
+║       [ PRESS ANY KEY TO START ]         ║
+╚══════════════════════════════════════════╝
+```
+
 [![Status](https://img.shields.io/badge/Status-Live-brightgreen)](#)
 [![Focus](https://img.shields.io/badge/Focus-Web%20%7C%20API%20%7C%20Cloud-red)](#)
 
