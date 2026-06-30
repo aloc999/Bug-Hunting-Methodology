@@ -2,7 +2,6 @@
 
 <div align="center">
    
-[![Edition](https://img.shields.io/badge/Edition-2025-blue)](#)
 [![Status](https://img.shields.io/badge/Status-Live-brightgreen)](#)
 [![Focus](https://img.shields.io/badge/Focus-Web%20%7C%20API%20%7C%20Cloud-red)](#)
 
