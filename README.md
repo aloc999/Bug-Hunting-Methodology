@@ -19,13 +19,327 @@ No fluff. No filler. Just the workflow that finds bugs.
 
 </div>
 
+<br>
+
+---
+
+## &#x1F680; Quick Start — Your First Bug Bounty Hunt
+
+> *Follow this walkthrough end-to-end. By the end, you'll have scanned a real target and found your first vulnerabilities.*
+
+---
+
+### &#x1F4E6; Step 0: Install All Tools (One-Time Setup)
+
+```bash
+# === Install Go (required for most recon tools) ===
+wget https://go.dev/dl/go1.22.0.linux-amd64.tar.gz
+sudo tar -C /usr/local -xzf go1.22.0.linux-amd64.tar.gz
+echo 'export PATH=$PATH:/usr/local/go/bin:$HOME/go/bin' >> ~/.zshrc
+source ~/.zshrc
+
+# === Install ALL recon tools (copy-paste this entire block) ===
+# Subdomain discovery
+go install github.com/projectdiscovery/subfinder/v2/cmd/subfinder@latest
+go install github.com/owasp-amass/amass/v4/...@latest
+go install github.com/tomnomnom/assetfinder@latest
+
+# DNS & probing
+go install github.com/projectdiscovery/shuffledns/cmd/shuffledns@latest
+go install github.com/projectdiscovery/dnsx/cmd/dnsx@latest
+go install github.com/projectdiscovery/httpx/cmd/httpx@latest
+go install github.com/tomnomnom/httprobe@latest
+
+# URL discovery
+go install github.com/lc/gau/v2/cmd/gau@latest
+go install github.com/tomnomnom/waybackurls@latest
+go install github.com/projectdiscovery/katana/cmd/katana@latest
+go install github.com/hakluke/hakrawler@latest
+
+# Content & parameter discovery
+go install github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest
+go install github.com/ffuf/ffuf/v2@latest
+go install github.com/tomnomnom/anew@latest
+go install github.com/tomnomnom/gf@latest
+go install github.com/tomnomnom/qsreplace@latest
+go install github.com/Emoe/kxss@latest
+
+# Install feroxbuster (Rust)
+curl -sL https://raw.githubusercontent.com/epi052/feroxbuster/main/install-nix.sh | bash
+sudo mv feroxbuster /usr/local/bin/
+
+# Install jwt_tool (Python)
+git clone https://github.com/ticarpi/jwt_tool.git ~/tools/jwt_tool/
+echo 'alias jwt_tool="python3 ~/tools/jwt_tool/jwt_tool.py"' >> ~/.zshrc
+
+# Verify everything installed
+subfinder -version && amass -version && httpx -version && nuclei -version && ffuf -V && katana -version
+# Expected: version numbers for each tool, no errors
+```
+
+**Need Burp Suite?** Download Community Edition from https://portswigger.net/burp/communitydownload  
+**On Windows?** Use WSL2 (Ubuntu) — all Linux commands work identically.  
+**On macOS?** Replace `wget` with `curl -O`, use `brew install go` for Go.
+
+---
+
+### &#x1F50D; Step 1: Pick a Target
+
+```bash
+# NEVER test production without permission! Use these safe practice targets:
+# Option A: Acunetix test site (has real vulnerabilities)
+export TARGET="testphp.vulnweb.com"
+
+# Option B: OWASP Juice Shop
+# export TARGET="juice-shop.herokuapp.com"
+
+# Option C: HackerOne CTF challenges
+# export TARGET="hackerone.com"  # only test challenges, not production
+
+echo "Target set to: $TARGET"
+mkdir -p ~/bugbounty/$TARGET && cd ~/bugbounty/$TARGET
+```
+
+---
+
+### &#x1F50D; Step 2: Find All Subdomains
+
+```bash
+# Passive — fast, no direct contact with target
+subfinder -d $TARGET -silent | anew subs.txt
+assetfinder --subs-only $TARGET | anew subs.txt
+amass enum -passive -d $TARGET -silent | anew subs.txt
+
+# Check how many we found
+echo "Found $(wc -l < subs.txt) subdomains so far"
+
+# Expected for testphp.vulnweb.com:
+# Found 2-5 subdomains so far  (small test target)
+```
+
+**What you just did:** Asked search engines, certificate transparency logs, and DNS databases what subdomains they know about — without ever touching the target server.
+
+---
+
+### &#x1F50D; Step 3: Find Live Websites
+
+```bash
+# Check which subdomains are actually alive and serving web pages
+cat subs.txt | httpx -silent -title -status-code -o live.txt
+
+# View results
+cat live.txt
+# Expected output:
+# https://testphp.vulnweb.com [200] [acunetix acuart]
+# http://testphp.vulnweb.com [200] [acunetix acuart]
+
+# Filter out only the URLs (for later tools)
+cat live.txt | awk '{print $1}' | anew live_urls.txt
+```
+
+**Tip:** If you see `[200]`, the site is alive. `[301/302]` = redirect, `[403]` = forbidden, `[404]` = dead.
+
+---
+
+### &#x1F50D; Step 4: Discover All URLs and Endpoints
+
+```bash
+# Collect every URL ever associated with this target from web archives
+echo "https://$TARGET" | waybackurls | anew all_urls.txt
+gau $TARGET | anew all_urls.txt
+
+echo "Found $(wc -l < all_urls.txt) historical URLs"
+
+# Crawl live site for current URLs
+echo "https://$TARGET" | katana -silent -jc | anew all_urls.txt
+
+# Find URLs with parameters (these are your TEST TARGETS)
+cat all_urls.txt | grep "=" | sort -u > params.txt
+
+echo "Found $(wc -l < params.txt) URLs with parameters to test"
+# Expected for testphp.vulnweb.com: ~10-30 parameterized URLs
+```
+
+**What you just did:** Wayback Machine + Google's cache → every URL the target ever had, including old/deleted pages that might still be accessible.
+
+---
+
+### &#x1F50D; Step 5: Find Hidden Files and Directories
+
+```bash
+# Brute-force common paths
+ffuf -u "https://$TARGET/FUZZ" \
+  -w /usr/share/seclists/Discovery/Web-Content/common.txt \
+  -mc 200,301,302,403 \
+  -o ffuf_results.json \
+  -silent
+
+# Check interesting results manually
+cat ffuf_results.json | jq -r '.results[] | "\(.status) \(.url)"' | sort -u
+
+# Expected interesting finds for testphp.vulnweb.com:
+# 200 https://testphp.vulnweb.com/admin/
+# 200 https://testphp.vulnweb.com/phpinfo.php  <-- GOLD
+# 200 https://testphp.vulnweb.com/.htaccess
+# 301 https://testphp.vulnweb.com/images/
+```
+
+**No wordlist?** Download one:
+```bash
+sudo apt install seclists -y
+# Wordlists will be at: /usr/share/seclists/
+```
+
+---
+
+### &#x1F50D; Step 6: Your First Vulnerability Hunt — SQL Injection
+
+```bash
+# Look at your parameterized URLs — pick one with an ID parameter
+head -5 params.txt
+
+# Test the first one manually
+# Expected: https://testphp.vulnweb.com/listproducts.php?cat=1
+
+# Simple SQLi probe — add a single quote
+curl -s "https://$TARGET/listproducts.php?cat=1'" | head -20
+
+# If you see an SQL error → JACKPOT! You found SQL injection!
+# Look for: "mysql_fetch", "SQL syntax", "mysql error", "ORA-", "PostgreSQL"
+
+# Expected from testphp.vulnweb.com:
+# ...mysql_fetch_array()...  ← SQL error exposed!
+```
+
+**Just found your first bug?** Take a screenshot immediately! Save it to `~/bugbounty/$TARGET/findings/`.
+
+---
+
+### &#x1F50D; Step 7: Your Second Vulnerability Hunt — XSS
+
+```bash
+# Find search forms — inject simple probe
+curl -s "https://$TARGET/search.php?test=query" | head -20
+
+# Inject XSS payload into every parameter
+cat params.txt | qsreplace '"><h2>XSS_TEST</h2>' | while read url; do
+  response=$(curl -s "$url")
+  if echo "$response" | grep -q "XSS_TEST"; then
+    echo "[!] XSS FOUND: $url"
+  fi
+done
+
+# Manual test on testphp.vulnweb.com:
+curl -s "https://$TARGET/listproducts.php?cat=%3Cscript%3Ealert(1)%3C%2Fscript%3E" | grep -o "script"
+
+# Also try the artist parameter:
+curl -s "https://$TARGET/artists.php?artist=%3Cscript%3Ealert(1)%3C%2Fscript%3E" | grep -io "script"
+```
+
+---
+
+### &#x1F50D; Step 8: Secrets in JavaScript Files
+
+```bash
+# Extract all JS files from the target
+cat all_urls.txt | grep "\.js" | sort -u > js_files.txt
+echo "Found $(wc -l < js_files.txt) JS files"
+
+# Hunt for secrets
+cat js_files.txt | while read js; do
+  curl -s "$js" | grep -iE "api[_-]?key|secret|token|password|auth"
+done
+
+# On testphp.vulnweb.com, look for exposed paths:
+cat js_files.txt | while read js; do
+  curl -s "$js" | grep -oE '"/[a-zA-Z0-9_/\-]+"' | head -10
+done 2>/dev/null
+```
+
+---
+
+### &#x1F50D; Step 9: Automated Vulnerability Scan (The Safety Net)
+
+```bash
+# Run Nuclei against your live URLs
+nuclei -l live_urls.txt -severity critical,high,medium -o nuclei_results.txt
+
+# View findings
+cat nuclei_results.txt
+# Expected: 0-5 findings depending on the target
+
+# Nuclei checks for 1000+ known vulnerability patterns automatically
+# It WON'T find custom logic bugs — that's where YOU come in
+```
+
+---
+
+### &#x1F4CB; Step 10: Document What You Found
+
+```bash
+# Create organized notes for every finding
+mkdir -p ~/bugbounty/$TARGET/findings
+
+# For each finding, save evidence:
+# 1. The vulnerable URL
+# 2. The payload that triggered it
+# 3. A screenshot of the result
+# 4. A short description of the impact
+
+# Example — save a finding:
+cat > ~/bugbounty/$TARGET/findings/sqli_search.txt << 'EOF'
+Title: SQL Injection in search parameter
+URL: https://testphp.vulnweb.com/listproducts.php?cat=1'
+Payload: ' (single quote)
+Impact: Database error exposed, possible data extraction
+Severity: High
+Steps to Reproduce:
+1. Visit https://testphp.vulnweb.com/listproducts.php?cat=1'
+2. Observe MySQL error in response
+3. Confirm SQL injection vulnerability
+EOF
+```
+
+---
+
+### &#x274C; Common Beginner Mistakes
+
+| Mistake | Fix |
+|---|---|
+| Scanning without permission | ONLY test targets with a bug bounty program or explicit authorization |
+| Using default wordlists (too small) | Download Seclists: `sudo apt install seclists -y` |
+| Skipping screenshot evidence | ALWAYS screenshot every finding immediately |
+| Testing too many vuln types at once | Focus on ONE vuln class per session |
+| Giving up after 1 hour | Bug bounty takes persistence — first bug often takes days |
+| Not checking program scope | Read the bug bounty program rules FIRST |
+| Testing with your real account | Create a separate test account for each target |
+| Ignoring non-HTTP services | Check for SSH, FTP, SMTP on subdomains too |
+
+---
+
+### &#x1F4AA; What's Next?
+
+Now that you've run through the basics, dive into the full methodology below. Each section has:
+- **Exact commands** you can copy-paste
+- **What output to expect** (so you know it's working)
+- **What to do when you find something**
+
+**Suggested reading order for beginners:**
+1. Section 1-3 (Recon → Discovery → Enumeration) — master the pipeline
+2. Section 4.4 (IDOR) — easiest high-impact bugs for beginners
+3. Section 4.1 (XSS) — most common bug class
+4. Section 5 (Hunting Mindset) — learn to think like a hunter
+5. Section 6 (POC Creation) — learn to prove your findings
+
+---
 
 <br>
 
-## 📜 Table of Contents
+## &#x1F4DC; Table of Contents
 
 | # | Section | Focus |
 |---|---------|-------|
+| **0** | [**Quick Start**](#-quick-start--your-first-bug-bounty-hunt) | **Tool Install · First Hunt · Step-by-Step** |
 | 1 | [Reconnaissance](#1-reconnaissance-and-subdomain-enumeration) | Subdomain Enumeration & Scanning |
 | 2 | [Discovery](#2-discovery-and-probing) | HTTP Probing & Asset Discovery |
 | 3 | [Enumeration](#3-advanced-enumeration-techniques) | Parameters, Content & API Discovery |
@@ -77,86 +391,111 @@ No fluff. No filler. Just the workflow that finds bugs.
 
 ## **1. Reconnaissance and Subdomain Enumeration**
 
-### **1.1 Passive Subdomain Enumeration**
-**🛠️Tools:** [Subfinder](https://github.com/projectdiscovery/subfinder), [Amass](https://github.com/OWASP/Amass), [CRTSH](https://crt.sh/), [Github-Search](https://github.com/gwen001/github-search)
+> **&#x1F393; Beginner Note:** Recon is finding what exists on the internet about your target. Think of it as drawing a map before entering enemy territory. You're looking for subdomains (dev.target.com, api.target.com, admin.target.com) — each one is a potential entry point.
 
-**Subfinder**
+### **1.1 Passive Subdomain Enumeration**
+
+> **Passive = No direct contact with target.** You're asking search engines and databases what they already know. Undetectable.
+
+**&#x1F4E6; Quick Install**
+```bash
+go install github.com/projectdiscovery/subfinder/v2/cmd/subfinder@latest
+go install github.com/owasp-amass/amass/v4/...@latest
+```
+
+**Subfinder — queries 50+ sources (SecurityTrails, Censys, Shodan, etc.)**
 ```bash
 subfinder -d target.com -silent -all -recursive -o subfinder_subs.txt
+# Expected: 10-500 subdomains depending on target size
 ```
 
-**Amass (Passive Mode)**
+**Amass (Passive Mode) — slow but thorough**
 ```bash
 amass enum -passive -d target.com -o amass_passive_subs.txt
+# This takes 2-5 minutes. Be patient — it searches deeply.
 ```
 
-**CRT.sh Query**
+**CRT.sh — Certificate Transparency logs (free, no API key)**
 ```bash
 curl -s "https://crt.sh/?q=%25.target.com&output=json" | jq -r '.[].name_value' | sed 's/\*\.//g' | anew crtsh_subs.txt
+# Expected: Many results — every SSL cert ever issued for *.target.com
 ```
 
-**Github Dorking**
-```bash
-github-subdomains -d target.com -t YOUR_GITHUB_TOKEN -o github_subs.txt
-```
-
-**Results Combination**
+**Results Combination — merge all, remove duplicates**
 ```bash
 cat *_subs.txt | sort -u | anew all_subs.txt
+echo "Total unique subdomains: $(wc -l < all_subs.txt)"
 ```
+
+---
 
 ### **1.2 Active Subdomain Enumeration**
 
-**🛠️Tools:** [MassDNS](https://github.com/blechschmidt/massdns), [Shuffledns](https://github.com/projectdiscovery/shuffledns), [DNSX](https://github.com/projectdiscovery/dnsx), [SubBrute](https://github.com/TheRook/subbrute), [FFuF](https://github.com/ffuf/ffuf)
+> **Active = You ARE touching the target.** Brute-force by guessing subdomain names. Use ONLY on authorized targets.
 
-**MassDNS**
+**&#x1F4E6; Quick Install**
 ```bash
-massdns -r resolvers.txt -t A -o S -w massdns_results.txt wordlist.txt
+go install github.com/projectdiscovery/shuffledns/cmd/shuffledns@latest
+go install github.com/projectdiscovery/dnsx/cmd/dnsx@latest
+# Resolver list (public DNS servers):
+wget https://raw.githubusercontent.com/trickest/resolvers/main/resolvers.txt -O ~/resolvers.txt
 ```
 
-**Shuffledns**
+**Shuffledns — mass DNS brute-force**
 ```bash
-shuffledns -d target.com -list all_subs.txt -r resolvers.txt -o active_subs.txt
+# First get a wordlist (most common subdomain names):
+wget https://raw.githubusercontent.com/danielmiessler/SecLists/master/Discovery/DNS/subdomains-top1million-5000.txt -O ~/subs_wordlist.txt
+
+shuffledns -d target.com -list all_subs.txt -r ~/resolvers.txt -o active_subs.txt
+# Expected: Adds 10-1000 more subdomains
 ```
 
-**DNSX Resolution**
+**DNSX — resolve IPs for every subdomain**
 ```bash
 dnsx -l active_subs.txt -resp -o resolved_subs.txt
+# Shows: subdomain → IP address → know what's hosted where
 ```
 
-**SubBrute**
+**&#x1F4A1; Beginner Tip:** You don't need everything. For your first hunt: `subfinder` + `crt.sh` + `httpx` (Section 2) are enough. Add more tools as you get comfortable.
+
+---
+
+### **1.3 URL Discovery (For Single Domains, Not Wildcards)**
+
+> If your target is a specific URL (not `*.target.com`), collect every page that ever existed.
+
+**&#x1F4E6; Quick Install**
 ```bash
-python3 subbrute.py target.com -w wordlist.txt -o brute_force_subs.txt
+go install github.com/lc/gau/v2/cmd/gau@latest
+go install github.com/tomnomnom/waybackurls@latest
+go install github.com/projectdiscovery/katana/cmd/katana@latest
 ```
 
-**FFuF Subdomain**
-```bash
-ffuf -u https://FUZZ.target.com -w wordlist.txt -t 50 -mc 200,403 -o ffuf_subs.txt
-```
-
-### **1.3 Handling Specific (Non-Wildcard) Targets**
-
-**🛠️Tools:** [GAU](https://github.com/lc/gau), [Waybackurls](https://github.com/tomnomnom/waybackurls), [Katana](https://github.com/projectdiscovery/katana), [Hakrawler](https://github.com/hakluke/hakrawler)
-
-**GAU**
+**GAU — Get All URLs from Wayback, CommonCrawl, AlienVault**
 ```bash
 gau target.example.com | anew gau_results.txt
+# Expected: 100-5000 historical URLs
 ```
 
-**Waybackurls**
+**Waybackurls — additional archive sources**
 ```bash
 waybackurls target.example.com | anew wayback_results.txt
 ```
 
-**Katana**
+**Katana — crawl the LIVE site (finds current endpoints)**
 ```bash
 katana -u target.example.com -silent -jc -o katana_results.txt
+# Expected: 20-200 current URLs depending on site size
 ```
 
-**Hakrawler**
-```bash
-echo "https://target.example.com" | hakrawler -depth 2 -plain -js -out hakrawler_results.txt
-```
+**&#x2753; How to know which flags matter:**
+| Flag | What it does | Use when... |
+|---|---|---|
+| `-silent` | Shows only results, no banners | Always |
+| `-o file.txt` | Save to file | You want to keep results |
+| `-jc` | Crawl JavaScript too | JS-heavy sites (React, Vue) |
+| `-all` | Use all data sources | You want maximum coverage |
+| `\| anew file.txt` | Append unique entries | Merging multiple results |
 
 ### **Additional Advanced Techniques**
 
@@ -189,102 +528,125 @@ cat all_subs.txt | httpx -silent -title -o live_subdomains.txt
 
 ## **2. Discovery and Probing**
 
-### **2.1 HTTP Probing**
+> **&#x1F393; Beginner Note:** Now that you have subdomains, which ones are actually live websites? This section finds what's alive and extracts useful information from them.
 
-**🛠️Tools:** [httpx](https://github.com/projectdiscovery/httpx), [httprobe](https://github.com/tomnomnom/httprobe)
+### **2.1 HTTP Probing — Find Live Websites**
 
-**HTTPX Probing**
+**&#x1F4E6; Quick Install**
 ```bash
-httpx -l resolved_subs.txt -p 80,443,8080,8443 -silent -title -sc -ip -o live_websites.txt
+go install github.com/projectdiscovery/httpx/cmd/httpx@latest
 ```
 
-**Custom Filtering**
+**HTTPX — the Swiss army knife of probing**
 ```bash
-cat live_websites.txt | grep -i "login\|admin" | tee login_endpoints.txt
+httpx -l resolved_subs.txt -p 80,443,8080,8443 -silent -title -status-code -ip -o live_websites.txt
+
+# View what you found:
+cat live_websites.txt
+# Expected output per line:
+# https://target.com [200] [Welcome to Target Inc.] [1.2.3.4]
+# https://blog.target.com [301] [301 Moved] [1.2.3.5]
+# https://admin.target.com [403] [403 Forbidden] [1.2.3.6]
 ```
 
-### **2.2 JavaScript Analysis**
+**&#x2753; Understanding HTTP status codes:**
+| Code | Meaning | What to do |
+|---|---|---|
+| 200 | OK, site is live | Test this one! |
+| 301/302 | Redirect | Follow it, test the destination |
+| 401 | Unauthorized | Try to access without login |
+| 403 | Forbidden | Try 401/403 bypass techniques (Section 4.26) |
+| 404 | Not found | Skip, it's dead |
+| 500 | Server error | Note it — might be exploitable |
 
-**🛠️Tools:** [LinkFinder](https://github.com/GerbenJavado/LinkFinder), [subjs](https://github.com/lc/subjs), [JSFinder](https://github.com/Threezh1/JSFinder), [GF](https://github.com/tomnomnom/gf)
-
-**JS Extraction**
+**Priority Filtering — find login pages FIRST**
 ```bash
-cat live_websites.txt | waybackurls | grep "\.js" | anew js_files.txt
+cat live_websites.txt | grep -i "login\|admin\|dashboard\|portal" | tee high_value_targets.txt
+# These are your most promising hunting grounds
 ```
 
-**LinkFinder Analysis**
+---
+
+### **2.2 JavaScript Analysis — Secret Gold Mine**
+
+> JS files often contain hidden API endpoints, API keys, and internal URLs that developers accidentally left in.
+
+**&#x1F4E6; Quick Install**
 ```bash
-python3 linkfinder.py -i js_files.txt -o js_endpoints.txt
+go install github.com/tomnomnom/gf@latest
+# Set up gf patterns:
+mkdir -p ~/.gf
+git clone https://github.com/1ndianl33t/Gf-Patterns ~/tmp/gf-patterns
+cp ~/tmp/gf-patterns/*.json ~/.gf/
 ```
 
-**Sensitive Pattern Search**
+**Step 1: Extract all JavaScript URLs**
 ```bash
-cat js_files.txt | gf aws-keys | tee aws_keys.txt
-cat js_files.txt | gf urls | tee sensitive_urls.txt
+cat live_websites.txt | awk '{print $1}' | waybackurls | grep "\.js" | sort -u | anew js_files.txt
+echo "Found $(wc -l < js_files.txt) JavaScript files"
 ```
 
-**API Key Validation**
+**Step 2: Hunt for secrets (no special tools needed!)**
 ```bash
-curl -X GET "https://api.example.com/resource" -H "Authorization: Bearer <extracted_key>"
+# Find API keys (this finds AWS, Google, GitHub, Stripe keys!)
+cat js_files.txt | while read url; do
+  curl -s "$url" | grep -oE '"[a-zA-Z0-9_]+"' | grep -iE "key|token|secret|password|auth"
+done 2>/dev/null | sort -u > found_secrets.txt
+
+# Check if you found anything real:
+cat found_secrets.txt
 ```
 
-### **2.3 Advanced Google Dorking**
-
-**🛠️Tools:** [GitDorker](https://github.com/obheda12/GitDorker)
-
-**Automated Dorking**
+**Step 3: Discover hidden API endpoints**
 ```bash
-python3 GitDorker.py -tf <github_token.txt> -q target.com -d dorks.txt -o git_dorks_output.txt
+cat js_files.txt | while read url; do
+  curl -s "$url" | grep -oE '"/api/[a-zA-Z0-9_/\-]+"' | head -20
+done 2>/dev/null | sort -u > discovered_apis.txt
+
+# These APIs might not be documented anywhere else!
 ```
 
-**Admin/Login Files**
+**&#x1F4A1; Beginner Tip:** If you find an API endpoint in JS like `/api/internal/users`, just try visiting it with your browser! Many internal APIs have no authentication.
+
+---
+
+### **2.3 Google Dorking — Find Exposed Files**
+
+> No tools needed. Just paste these into Google (replace target.com with your target):
+
 ```bash
-site:*.example.com inurl:"*admin | login" | inurl:.php | .asp
+# Admin panels exposed
+site:target.com inurl:admin
+
+# Configuration files exposed  
+site:target.com ext:env OR ext:yaml OR ext:ini
+
+# Backup files left on server
+site:target.com ext:bak OR ext:backup OR ext:old
+
+# Login portals
+site:target.com inurl:login OR inurl:signin
+
+# Error messages (leak server info)
+site:target.com "warning" OR "error" OR "fatal"
 ```
 
-**Config Files**
+---
+
+### **2.4 Archive Enumeration — Dead Pages That Still Exist**
+
 ```bash
-site:*.example.com ext:env | ext:yaml | ext:ini
-```
-
-**Public Keys**
-```bash
-site:*.example.com inurl:"id_rsa.pub" | inurl:".pem"
-```
-
-### **2.4 URL Discovery**
-
-**🛠️Tools:** [Katana](https://github.com/projectdiscovery/katana), [Gospider](https://github.com/jaeles-project/gospider), [Hakrawler](https://github.com/hakluke/hakrawler)
-
-**Katana Crawling**
-```bash
-katana -list live_websites.txt -jc -o katana_urls.txt
-```
-
-**Gospider**
-```bash
-gospider -s "https://target.com" -d 2 -o gospider_output/
-```
-
-**Hakrawler**
-```bash
-echo "https://target.com" | hakrawler -depth 3 -plain -out hakrawler_results.txt
-```
-
-### **2.5 Archive Enumeration**
-
-**🛠️Tools:** [GAU](https://github.com/lc/gau), [Waybackurls](https://github.com/tomnomnom/waybackurls), [ParamSpider](https://github.com/devanshbatham/ParamSpider)
-
-**Archive URL Collection**
-```bash
+# WayBack Machine — pages from years ago might still be accessible!
 gau --subs target.com | anew archived_urls.txt
-waybackurls target.com | anew wayback_urls.txt
+
+# Extract only URLs with parameters (these are your TEST CANDIDATES)
+cat archived_urls.txt | grep "=" | sort -u > parameters_to_test.txt
+
+echo "Found $(wc -l < parameters_to_test.txt) URLs with parameters to test"
+# These are ALL potential injection points!
 ```
 
-**Parameter Extraction**
-```bash
-cat archived_urls.txt | grep "=" | anew parameters.txt
-```
+**&#x1F4A1; Why archives matter:** A page might have been deleted from the live site but the server still processes requests to it. Old API endpoints, debug pages, or test scripts often persist in archives.
 
 ---
 
