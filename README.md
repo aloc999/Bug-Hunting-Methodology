@@ -1,4 +1,7 @@
-<h1 align="center">BUG HUNTING</h1>
+<h1 align="center">
+  <code>B U G&ensp;H U N T I N G</code>
+</h1>
+<p align="center"><sub>the hunter's methodology</sub></p>
 
 <div align="center">
 
